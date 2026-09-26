@@ -1,0 +1,2 @@
+# Preserve exact canonical byte representations for official contract artifacts
+official/* text eol=lf
