@@ -1,10 +1,10 @@
 # STATE
 
 ## Current phase
-SCAFFOLD
+SCAFFOLD (Ready for commit)
 
 ## Last checkpoint passed
-H0 delta gate
+Application scaffold (build, tests, healthz, healthcheck all PASS)
 
 ## Current blocker
 none
@@ -13,7 +13,7 @@ none
 not run
 
 ## Next action
-Create minimum Go application scaffold.
+Review and commit application scaffold, then proceed to Migration 0001 (T1 Core Schema).
 
 ## Known deltas since H0
 None.
