@@ -3,21 +3,188 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dogfood 2026</title>
+    <title>{{if .EventName}}{{.EventName}}{{else}}Dogfood 2026{{end}} — Project Gallery</title>
     <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-    <header>
-        <div class="container">
-            <h1>Dogfood 2026</h1>
-            <p>Self-hostable hackathon platform</p>
+    <header class="site-header">
+        <div class="container header-inner">
+            <div class="brand-group">
+                <a href="/projects" class="brand-title">Dogfood 2026</a>
+                <span class="event-name">{{if .EventName}}{{.EventName}}{{else}}Hackathon{{end}}</span>
+                {{if .SubmissionsOpen}}
+                <span class="status-badge status-open">● Submissions Open</span>
+                {{else}}
+                <span class="status-badge status-closed">● Submissions Closed</span>
+                {{end}}
+            </div>
+            <nav class="nav-links">
+                <a href="/projects" class="nav-link active">Gallery</a>
+                {{if .User}}
+                <a href="/dashboard" class="nav-link">Dashboard ({{.User.DisplayName}})</a>
+                <a href="/logout" class="nav-link nav-btn-outline">Sign Out</a>
+                {{else}}
+                <a href="/login" class="nav-link nav-btn">Sign In</a>
+                {{end}}
+            </nav>
         </div>
     </header>
+
     <main class="container">
-        <section class="card">
-            <h2>System Status</h2>
-            <p>Platform scaffold is online and operational.</p>
+        <div class="gallery-toolbar">
+            <div class="toolbar-top">
+                <div class="heading-group">
+                    <h1>Submissions Gallery</h1>
+                    <p class="subtitle">Browsing {{.TotalCount}} official project submissions</p>
+                </div>
+                <div class="search-box">
+                    <input type="text" id="gallery-search" placeholder="Search by title, team, summary..." autocomplete="off" oninput="filterCards()">
+                </div>
+            </div>
+
+            {{if .Tracks}}
+            <div class="track-filters" id="track-filter-container">
+                <button type="button" class="filter-btn active" data-track="all" onclick="selectTrack('all', this)">All ({{.TotalCount}})</button>
+                {{range .Tracks}}
+                <button type="button" class="filter-btn" data-track="{{.ID}}" onclick="selectTrack('{{.ID}}', this)">{{.Name}} ({{.Count}})</button>
+                {{end}}
+            </div>
+            {{end}}
+        </div>
+
+        {{if .Prizes}}
+        <section class="card" style="margin-bottom: 1.5rem;">
+            <h3 style="margin-top: 0; font-size: 1.05rem; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.05em;">Hackathon Prizes</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 0.75rem;">
+                {{range .Prizes}}
+                <div style="background: rgba(255,255,255,0.03); border: 1px solid #27272a; border-radius: 8px; padding: 0.75rem 1rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                        <strong style="color: #fafafa;">{{.Name}}</strong>
+                        {{if .AmountText}}<span style="color: #22c55e; font-weight: 600; font-size: 0.9rem;">{{.AmountText}}</span>{{end}}
+                    </div>
+                    {{if .Description}}<p style="margin: 0.25rem 0 0; font-size: 0.85rem; color: #a1a1aa;">{{.Description}}</p>{{end}}
+                    <span class="tag" style="margin-top: 0.5rem; display: inline-block; font-size: 0.75rem;">{{.TrackName}}</span>
+                </div>
+                {{end}}
+            </div>
         </section>
+        {{end}}
+
+        <div id="no-matches" class="card no-results" style="display: none;">
+            <h3>No matching projects found</h3>
+            <p>Try clearing your search terms or selecting another track.</p>
+        </div>
+
+        {{if .Projects}}
+        <div class="gallery-grid" id="gallery-grid">
+            {{range .Projects}}
+            <article class="project-card" data-title="{{.Title}}" data-summary="{{.Summary}}" data-team="{{.TeamID}}" data-track="{{.TrackID}}">
+                <div class="card-header">
+                    <h2 class="project-title"><a href="/projects/{{.ID}}">{{.Title}}</a></h2>
+                    <span class="tag">{{.TrackName}}</span>
+                </div>
+                <p class="project-summary">{{.Summary}}</p>
+                <div class="project-meta">
+                    <span class="meta-item">Team: <strong>{{.TeamID}}</strong></span>
+                    {{if .FormattedDate}}<span class="meta-item timestamp">{{.FormattedDate}}</span>{{end}}
+                    {{if .RepoURL}}
+                    <a href="{{.RepoURL}}" target="_blank" rel="noopener noreferrer" class="repo-link">Repository ↗</a>
+                    {{end}}
+                </div>
+                <div class="card-actions">
+                    <button type="button" class="btn-sm btn-outline" onclick="openModal('modal-{{.ID}}')">Details</button>
+                    <a href="/projects/{{.ID}}" class="btn-sm btn-secondary">Open Page</a>
+                </div>
+
+                <dialog id="modal-{{.ID}}" class="project-modal">
+                    <div class="modal-body">
+                        <div class="modal-header">
+                            <h3>{{.Title}}</h3>
+                            <button type="button" class="close-btn" onclick="closeModal('modal-{{.ID}}')">&times;</button>
+                        </div>
+                        <div class="modal-meta">
+                            <span class="tag">{{.TrackName}}</span>
+                            <span>Team: <strong>{{.TeamID}}</strong></span>
+                            {{if .FormattedDate}}<span>Submitted: {{.FormattedDate}}</span>{{end}}
+                        </div>
+                        <div class="modal-section">
+                            <h4>Summary</h4>
+                            <p>{{.Summary}}</p>
+                        </div>
+                        {{if .RepoURL}}
+                        <div class="modal-section">
+                            <h4>Repository</h4>
+                            <a href="{{.RepoURL}}" target="_blank" rel="noopener noreferrer">{{.RepoURL}} ↗</a>
+                        </div>
+                        {{end}}
+                        <div class="modal-footer">
+                            <button type="button" class="btn-secondary" onclick="closeModal('modal-{{.ID}}')">Close</button>
+                            <a href="/projects/{{.ID}}" class="btn-primary">View Full Page</a>
+                        </div>
+                    </div>
+                </dialog>
+            </article>
+            {{end}}
+        </div>
+        {{else}}
+        <section class="card">
+            <h2>No Submissions Yet</h2>
+            <p>Submissions will appear here once submitted.</p>
+        </section>
+        {{end}}
     </main>
+
+    <script>
+        let currentTrack = 'all';
+
+        function selectTrack(trackId, btn) {
+            currentTrack = trackId;
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            filterCards();
+        }
+
+        function filterCards() {
+            const query = (document.getElementById('gallery-search').value || '').toLowerCase().trim();
+            const cards = document.querySelectorAll('.project-card');
+            let visible = 0;
+
+            cards.forEach(card => {
+                const title = (card.dataset.title || '').toLowerCase();
+                const summary = (card.dataset.summary || '').toLowerCase();
+                const team = (card.dataset.team || '').toLowerCase();
+                const track = card.dataset.track || '';
+
+                const matchesQuery = !query || title.includes(query) || summary.includes(query) || team.includes(query);
+                const matchesTrack = currentTrack === 'all' || track === currentTrack;
+
+                if (matchesQuery && matchesTrack) {
+                    card.style.display = '';
+                    visible++;
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+
+            const noMatches = document.getElementById('no-matches');
+            if (noMatches) {
+                noMatches.style.display = (visible === 0) ? 'block' : 'none';
+            }
+        }
+
+        function openModal(id) {
+            const m = document.getElementById(id);
+            if (m && typeof m.showModal === 'function') {
+                m.showModal();
+            }
+        }
+
+        function closeModal(id) {
+            const m = document.getElementById(id);
+            if (m && typeof m.close === 'function') {
+                m.close();
+            }
+        }
+    </script>
 </body>
 </html>

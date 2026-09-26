@@ -34,3 +34,7 @@ Thumbs.db
 
 # Local evidence/debug folders
 tmp-evidence/
+
+# Python
+__pycache__/
+*.pyc

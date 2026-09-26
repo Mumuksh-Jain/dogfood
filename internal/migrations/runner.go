@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"embed"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -15,6 +16,9 @@ import (
 	"time"
 )
 
+//go:embed *.sql
+var EmbeddedFS embed.FS
+
 // Record represents a row in schema_migrations table.
 type Record struct {
 	Version        int
@@ -24,7 +28,7 @@ type Record struct {
 }
 
 // ActiveFS holds the migration SQL files. Can be overridden or embedded.
-var ActiveFS fs.FS
+var ActiveFS fs.FS = EmbeddedFS
 
 // Run creates the schema_migrations table and executes any pending migrations from ActiveFS.
 func Run(ctx context.Context, db *sql.DB) error {

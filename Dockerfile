@@ -1,5 +1,5 @@
 # Stage 1: Build static Linux amd64 executable
-FROM golang:1.24-alpine AS builder
+FROM golang:1.27.1-alpine AS builder
 
 WORKDIR /src
 
@@ -17,7 +17,7 @@ FROM scratch
 WORKDIR /
 
 COPY --from=builder /bin/dogfood /dogfood
-COPY official/fixtures.json /fixtures.json
+COPY official/fixtures.json /official/fixtures.json
 
 EXPOSE 8080
 VOLUME ["/data"]

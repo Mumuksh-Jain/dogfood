@@ -14,6 +14,7 @@ import (
 	"dogfood/internal/db"
 	"dogfood/internal/httpapp"
 	"dogfood/internal/migrations"
+	"dogfood/internal/seed"
 )
 
 func main() {
@@ -84,6 +85,23 @@ func runServer() error {
 	fmt.Println("running migrations...")
 	if err := migrations.Run(ctx, database); err != nil {
 		return fmt.Errorf("migration failure: %w", err)
+	}
+
+	fmt.Println("seeding fixtures...")
+	seedRes, err := seed.Run(ctx, database, "")
+	if err != nil {
+		return fmt.Errorf("seed failure: %w", err)
+	}
+	if seedRes.AlreadySeeded {
+		fmt.Printf("fixtures already seeded (hash: %s...)\n", seedRes.SourceHash[:8])
+	} else {
+		fmt.Printf("seeded fixtures for event %s: %d tracks, %d teams, %d projects\n",
+			seedRes.EventID, seedRes.TracksCount, seedRes.TeamsCount, seedRes.ProjectsCount)
+		fmt.Println("seeded test logins:")
+		fmt.Println("  organizer    Cookie: session=org_7f2a")
+		fmt.Println("  judge_a      Cookie: session=jdg_a_91bc")
+		fmt.Println("  judge_b      Cookie: session=jdg_b_44de")
+		fmt.Println("  participant  Cookie: session=prt_2e88")
 	}
 
 	server, err := httpapp.NewServer(httpapp.Config{

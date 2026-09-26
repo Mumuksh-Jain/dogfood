@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Project.Title}} — Dogfood 2026</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="container header-inner">
+            <div class="brand-group">
+                <a href="/projects" class="brand-title">Dogfood 2026</a>
+                <span class="event-name">{{if .EventName}}{{.EventName}}{{else}}Hackathon{{end}}</span>
+            </div>
+            <nav class="nav-links">
+                <a href="/projects" class="nav-link">Gallery</a>
+                {{if .User}}
+                <a href="/dashboard" class="nav-link">Dashboard</a>
+                <a href="/logout" class="nav-link nav-btn-outline">Sign Out</a>
+                {{else}}
+                <a href="/login" class="nav-link nav-btn">Sign In</a>
+                {{end}}
+            </nav>
+        </div>
+    </header>
+
+    <main class="container project-detail-container">
+        <div class="back-nav">
+            <a href="/projects" class="btn-sm btn-outline">&larr; Back to Gallery</a>
+        </div>
+
+        <article class="card project-detail-card">
+            <div class="project-header">
+                <div>
+                    <h1 class="project-main-title">{{.Project.Title}}</h1>
+                    <div class="project-tags">
+                        <span class="tag">{{.Project.TrackName}}</span>
+                        <span class="status-badge {{if eq .Project.State "SUBMITTED"}}status-open{{else}}status-closed{{end}}">{{.Project.State}}</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="meta-banner">
+                <div class="meta-cell">
+                    <span class="label">Project ID</span>
+                    <span class="value"><code>{{.Project.ID}}</code></span>
+                </div>
+                <div class="meta-cell">
+                    <span class="label">Team</span>
+                    <span class="value"><strong>{{.Project.TeamID}}</strong></span>
+                </div>
+                {{if .Project.FormattedDate}}
+                <div class="meta-cell">
+                    <span class="label">Submitted At</span>
+                    <span class="value">{{.Project.FormattedDate}}</span>
+                </div>
+                {{end}}
+                {{if .Project.RepoURL}}
+                <div class="meta-cell">
+                    <span class="label">Source Code</span>
+                    <span class="value"><a href="{{.Project.RepoURL}}" target="_blank" rel="noopener noreferrer">Repository ↗</a></span>
+                </div>
+                {{end}}
+            </div>
+
+            <div class="project-body-section">
+                <h3>About the Project</h3>
+                <p class="summary-text">{{.Project.Summary}}</p>
+            </div>
+
+            {{if .CanEdit}}
+            <div class="project-edit-section">
+                <hr class="divider">
+                <h3>Edit Submission (Version {{.Project.VersionNo}})</h3>
+                {{if .SubmissionsOpen}}
+                <form action="/api/projects/{{.Project.ID}}/edit" method="POST" class="grid-form">
+                    <div class="form-group">
+                        <label for="edit_title">Title</label>
+                        <input type="text" id="edit_title" name="title" value="{{.Project.Title}}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit_repo">Repository URL</label>
+                        <input type="url" id="edit_repo" name="repo_url" value="{{.Project.RepoURL}}" required>
+                    </div>
+                    <div class="form-group full-width">
+                        <label for="edit_summary">Summary</label>
+                        <textarea id="edit_summary" name="summary" rows="3" required>{{.Project.Summary}}</textarea>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn-primary">Save Changes</button>
+                    </div>
+                </form>
+                {{else}}
+                <div class="alert alert-warning">
+                    Submissions are closed. This submission cannot be edited.
+                </div>
+                {{end}}
+            </div>
+            {{end}}
+        </article>
+    </main>
+</body>
+</html>

@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard — Dogfood 2026</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="container header-inner">
+            <div class="brand-group">
+                <a href="/projects" class="brand-title">Dogfood 2026</a>
+                <span class="event-name">{{if .EventName}}{{.EventName}}{{else}}Hackathon{{end}}</span>
+                {{if .SubmissionsOpen}}
+                <span class="status-badge status-open">● Submissions Open</span>
+                {{else}}
+                <span class="status-badge status-closed">● Submissions Closed</span>
+                {{end}}
+            </div>
+            <nav class="nav-links">
+                <a href="/projects" class="nav-link">Gallery</a>
+                <a href="/dashboard" class="nav-link active">Dashboard</a>
+                <a href="/logout" class="nav-link nav-btn-outline">Sign Out</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- User Identity Header -->
+        <section class="card user-profile-card">
+            <div class="profile-header">
+                <div>
+                    <h2>{{.User.DisplayName}}</h2>
+                    <p class="subtitle">{{.User.Email}} (ID: <code>{{.User.UserID}}</code>)</p>
+                </div>
+                <div class="role-badges">
+                    {{range $role, $active := .User.Roles}}
+                    {{if $active}}<span class="role-pill pill-{{$role}}">{{$role}}</span>{{end}}
+                    {{end}}
+                </div>
+            </div>
+        </section>
+
+        {{if .Message}}
+        <div class="alert alert-success">{{.Message}}</div>
+        {{end}}
+        {{if .Error}}
+        <div class="alert alert-error">{{.Error}}</div>
+        {{end}}
+
+        <!-- ORGANIZER / ADMIN SECTION -->
+        {{if or .IsOrganizer .IsAdmin}}
+        <section class="card section-card">
+            <div class="section-header">
+                <h3>Admin &amp; Organizer Controls</h3>
+                <a href="/api/export.csv" class="btn-sm btn-primary">Download Results CSV ↗</a>
+            </div>
+            
+            <h4>Event Lifecycle Windows</h4>
+            <form action="/api/organizer/event" method="POST" class="grid-form">
+                <div class="form-group">
+                    <label for="event_name">Event Name</label>
+                    <input type="text" id="event_name" name="name" value="{{.EventName}}" required>
+                </div>
+                <div class="form-group">
+                    <label for="close_at">Submissions Close At (UTC RFC3339)</label>
+                    <input type="text" id="close_at" name="submissions_close_at" value="{{.SubmissionsCloseAt}}" placeholder="2026-03-01T18:00:00Z" required>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="btn-primary">Update Event Windows</button>
+                </div>
+            </form>
+
+            <hr class="divider">
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-top: 1rem;">
+                <!-- Tracks Configuration -->
+                <div class="card" style="background: rgba(255,255,255,0.02);">
+                    <h4>Tracks Management</h4>
+                    <form action="/api/organizer/tracks" method="POST" style="margin-bottom: 1rem;">
+                        <div class="form-group">
+                            <label for="track_name">Track Name</label>
+                            <input type="text" id="track_name" name="name" placeholder="e.g. AI / ML" required>
+                        </div>
+                        <button type="submit" class="btn-sm btn-outline">+ Create Track</button>
+                    </form>
+                    <h5>Configured Tracks</h5>
+                    <ul style="padding-left: 1.25rem;">
+                        {{range .Tracks}}
+                        <li><strong>{{.Name}}</strong> (ID: <code>{{.ID}}</code>, Projects: {{.Count}})</li>
+                        {{end}}
+                    </ul>
+                </div>
+
+                <!-- Prizes Configuration -->
+                <div class="card" style="background: rgba(255,255,255,0.02);">
+                    <h4>Prizes Management</h4>
+                    <form action="/api/organizer/prizes" method="POST" style="margin-bottom: 1rem;">
+                        <div class="form-group">
+                            <label for="prize_name">Prize Name</label>
+                            <input type="text" id="prize_name" name="name" placeholder="e.g. First Place" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="prize_amount">Amount / Reward</label>
+                            <input type="text" id="prize_amount" name="amount_text" placeholder="e.g. $10,000">
+                        </div>
+                        <div class="form-group">
+                            <label for="prize_desc">Description</label>
+                            <input type="text" id="prize_desc" name="description" placeholder="Best overall hack">
+                        </div>
+                        <div class="form-group">
+                            <label for="prize_track">Track (Optional)</label>
+                            <select id="prize_track" name="track_id">
+                                <option value="">All Tracks</option>
+                                {{range .Tracks}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                        <button type="submit" class="btn-sm btn-outline">+ Create Prize</button>
+                    </form>
+                    <h5>Configured Prizes</h5>
+                    <ul style="padding-left: 1.25rem;">
+                        {{range .Prizes}}
+                        <li><strong>{{.Name}}</strong> — {{.AmountText}} (Track: {{.TrackName}})</li>
+                        {{else}}
+                        <li class="text-muted">No prizes configured yet.</li>
+                        {{end}}
+                    </ul>
+                </div>
+            </div>
+        </section>
+        {{end}}
+
+        <!-- JUDGE SECTION -->
+        {{if .IsJudge}}
+        <section class="card section-card">
+            <div class="section-header">
+                <h3>Judge Workspace</h3>
+                <a href="/api/judge/scores" class="btn-sm btn-outline">View My Private Scores (JSON) ↗</a>
+            </div>
+            <p>You are registered as an official evaluator. Your private scores are cryptographically isolated from peer judges.</p>
+        </section>
+        {{end}}
+
+        <!-- PARTICIPANT SECTION -->
+        <section class="card section-card">
+            <h3>Participant Workspace</h3>
+
+            {{if .Team}}
+            <div class="team-panel">
+                <div class="team-header">
+                    <div>
+                        <h4>Team: <strong>{{.Team.Name}}</strong> (ID: <code>{{.Team.ID}}</code>)</h4>
+                        <p class="subtitle">{{len .TeamMembers}} of 4 members</p>
+                    </div>
+                    {{if lt (len .TeamMembers) 4}}
+                    <form action="/api/teams/{{.Team.ID}}/invites" method="POST" style="display:inline;">
+                        <button type="submit" class="btn-sm btn-outline">+ Generate Join Invite</button>
+                    </form>
+                    {{else}}
+                    <span class="badge-full">Team Full (Capacity 4/4)</span>
+                    {{end}}
+                </div>
+
+                <!-- Active Members -->
+                <div class="member-list">
+                    <h5>Members</h5>
+                    <ul>
+                        {{range .TeamMembers}}
+                        <li>
+                            <strong>{{.DisplayName}}</strong> &lt;{{.Email}}&gt;
+                            <span class="tag">{{.Role}}</span>
+                        </li>
+                        {{end}}
+                    </ul>
+                </div>
+
+                <!-- Invites -->
+                {{if .TeamInvites}}
+                <div class="invite-list">
+                    <h5>Active & Recent Invites</h5>
+                    <ul>
+                        {{range .TeamInvites}}
+                        <li>
+                            Invite <code>{{.ID}}</code> —
+                            {{if .RevokedAt}}<span class="text-danger">Revoked</span>
+                            {{else if .AcceptedAt}}<span class="text-success">Accepted by {{.AcceptedBy}}</span>
+                            {{else}}<span class="text-warning">Pending (Expires {{.ExpiresAt}})</span> — Token: <code>{{.TokenHash}}</code>{{end}}
+                        </li>
+                        {{end}}
+                    </ul>
+                </div>
+                {{end}}
+
+                <hr class="divider">
+
+                <!-- Team Projects -->
+                <div class="projects-section">
+                    <div class="section-header">
+                        <h4>Team Projects</h4>
+                    </div>
+
+                    {{if .TeamProjects}}
+                    <div class="team-project-list">
+                        {{range .TeamProjects}}
+                        <div class="project-entry card">
+                            <div class="entry-header">
+                                <h5><a href="/projects/{{.ID}}">{{.Title}}</a></h5>
+                                <span class="tag">{{.TrackName}}</span>
+                                <span class="status-badge {{if eq .State "SUBMITTED"}}status-open{{else}}status-closed{{end}}">{{.State}}</span>
+                            </div>
+                            <p>{{.Summary}}</p>
+                            {{if .RepoURL}}<p>Repo: <a href="{{.RepoURL}}" target="_blank" rel="noopener noreferrer">{{.RepoURL}}</a></p>{{end}}
+
+                            <div class="entry-actions">
+                                <a href="/projects/{{.ID}}" class="btn-sm btn-secondary">View Page</a>
+                                {{if and (eq .State "DRAFT") $.SubmissionsOpen}}
+                                <form action="/api/projects/{{.ID}}/submit" method="POST" style="display:inline;">
+                                    <button type="submit" class="btn-sm btn-primary">Submit to Hackathon</button>
+                                </form>
+                                {{end}}
+                            </div>
+                        </div>
+                        {{end}}
+                    </div>
+                    {{else}}
+                    <p class="text-muted">No projects created yet for this team.</p>
+                    {{end}}
+
+                    <!-- Create New Project Form -->
+                    {{if .SubmissionsOpen}}
+                    <div class="new-project-box card">
+                        <h5>Create New Project / Submission</h5>
+                        <form action="/api/projects" method="POST" class="grid-form">
+                            <input type="hidden" name="team_id" value="{{.Team.ID}}">
+                            <div class="form-group">
+                                <label for="prj_title">Project Title</label>
+                                <input type="text" id="prj_title" name="title" required placeholder="Project Name">
+                            </div>
+                            <div class="form-group">
+                                <label for="prj_track">Track</label>
+                                <select id="prj_track" name="track_id" required>
+                                    {{range $.Tracks}}
+                                    <option value="{{.ID}}">{{.Name}}</option>
+                                    {{end}}
+                                </select>
+                            </div>
+                            <div class="form-group full-width">
+                                <label for="prj_summary">Summary</label>
+                                <textarea id="prj_summary" name="summary" rows="2" placeholder="One line of what it does." required></textarea>
+                            </div>
+                            <div class="form-group">
+                                <label for="prj_repo">Repository URL</label>
+                                <input type="url" id="prj_repo" name="repo_url" placeholder="https://github.com/..." required>
+                            </div>
+                            <div class="form-group">
+                                <label for="prj_demo">Demo URL (Optional)</label>
+                                <input type="url" id="prj_demo" name="demo_url" placeholder="https://...">
+                            </div>
+                            <div class="form-actions">
+                                <button type="submit" name="action" value="draft" class="btn-secondary">Save as Draft</button>
+                                <button type="submit" name="action" value="submit" class="btn-primary">Submit Project</button>
+                            </div>
+                        </form>
+                    </div>
+                    {{else}}
+                    <div class="alert alert-warning">
+                        <strong>Submissions Closed</strong>: Submissions deadline passed at {{.SubmissionsCloseAt}}. New projects and edits cannot be submitted.
+                    </div>
+                    {{end}}
+                </div>
+            </div>
+            {{else}}
+            <!-- Not on a team: Create or Join -->
+            <div class="team-setup-grid">
+                <div class="card setup-box">
+                    <h4>Create a New Team</h4>
+                    <p class="subtitle">Start a new team for this hackathon. You will be the team lead.</p>
+                    <form action="/api/teams" method="POST">
+                        <div class="form-group">
+                            <label for="team_name">Team Name</label>
+                            <input type="text" id="team_name" name="name" placeholder="e.g. Nightshift" required>
+                        </div>
+                        <button type="submit" class="btn-primary">Create Team</button>
+                    </form>
+                </div>
+
+                <div class="card setup-box">
+                    <h4>Join an Existing Team</h4>
+                    <p class="subtitle">Enter the invite token provided by your teammate.</p>
+                    <form action="/api/teams/join" method="POST">
+                        <div class="form-group">
+                            <label for="invite_token">Invite Token</label>
+                            <input type="text" id="invite_token" name="token" placeholder="Paste token here" required>
+                        </div>
+                        <button type="submit" class="btn-outline">Join Team</button>
+                    </form>
+                </div>
+            </div>
+            {{end}}
+        </section>
+    </main>
+</body>
+</html>

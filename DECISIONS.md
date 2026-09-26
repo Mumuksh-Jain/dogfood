@@ -157,6 +157,455 @@ flowchart TD
 
 ---
 
+### Checkpoint 4: First Real Vertical Slice & Official Acceptance Suite
+
+#### Challenge 4.1: HTTP/1.1 TCP Connection Reset on Unconsumed Request Bodies
+* **Problem**: In `run.py`, the check `closed event refuses submissions` POSTs a JSON payload to `/projects/new`. The server recognized the closed event and immediately responded with HTTP 403 Forbidden. However, because the Go handler exited without draining `r.Body`, Go's `net/http` server sent a TCP reset on the connection with unread incoming bytes. On Windows, Python's `urllib.request` threw `ConnectionResetError` (an OS error, not an `HTTPError`), causing `run.py` to record `got no response, wanted 4xx`.
+* **Solution**:
+  Added explicit request-body draining in `handleSubmit` before writing status codes:
+  ```go
+  if r.Body != nil {
+      _, _ = io.Copy(io.Discard, io.LimitReader(r.Body, 1<<20))
+      _ = r.Body.Close()
+  }
+  ```
+  This guarantees that incoming TCP streams remain cleanly synchronized, and Python's `urllib` cleanly reads the HTTP 403 response body.
+
+#### Challenge 4.2: Enforcing Peer-Judge Isolation via Real Authorization
+* **Problem**: Passing `run.py`'s peer-isolation check requires ensuring that judge B cannot view judge A's private scores at `/api/judge/scores?judge=judge_a`.
+* **Solution**: In [`internal/httpapp/server.go`](file:///C:/Users/Administrator/Downloads/dogfood/internal/httpapp/server.go), `handleJudgeScores` resolves caller identity from the session token in the database. If a specific `judge` query parameter is provided and does not match the caller's own ID (and the caller is not an organizer), the endpoint returns HTTP 403 Forbidden. Participants are also blocked with 403.
+
+---
+
+### Checkpoint 5 — Docker Runtime Recovery, Toolchain Alignment, and Acceptance Verification
+
+#### Context
+
+After the First Real Vertical Slice passed the official Dogfood checker when executed directly from the Go development environment, the equivalent Docker deployment initially failed to expose the new routes.
+
+Observed symptoms included:
+
+- `/healthz` responding successfully from an older container image.
+- `/projects`, `/api/judge/scores`, and `/api/export.csv` returning `404`.
+- Docker rebuild failing at `go mod download`.
+- After the image build was repaired, the new container entered a restart loop.
+- The official checker therefore temporarily reported no verified tier.
+
+The application logic itself had already passed the official acceptance suite outside Docker, so the debugging objective was to isolate deployment/runtime drift rather than redesign working application code.
+
+---
+
+#### Decision 5.1 — Docker Builder Go Version Must Match `go.mod`
+
+##### Problem
+
+The Dockerfile used:
+
+```dockerfile
+FROM golang:1.24-alpine AS builder
+```
+
+while `go.mod` requires Go `1.27.1`.
+
+The Docker build therefore failed with:
+
+```text
+go: go.mod requires go >= 1.27.1
+(running go 1.24.13; GOTOOLCHAIN=local)
+```
+
+This failure prevented the latest application source from being packaged into the Docker image. `docker compose up` consequently continued starting an older cached image, which explained the unexpected `404` responses on newly implemented routes.
+
+##### Decision
+
+Pin the builder image to the same Go toolchain version frozen for the application:
+
+```dockerfile
+FROM golang:1.27.1-alpine AS builder
+```
+
+##### Rationale
+
+The containerized build must use the same minimum toolchain version declared by the source repository. Allowing the Dockerfile and `go.mod` to drift creates false runtime failures where the application source is correct but cannot be reproduced inside the submission container.
+
+##### Verification
+
+After changing the builder image:
+
+```text
+go mod download        PASS
+linux/amd64 Go build   PASS
+Docker image export    PASS
+```
+
+The resulting application image was successfully built.
+
+---
+
+#### Decision 5.2 — Do Not Diagnose Stale Docker Images as Application Regressions
+
+##### Observation
+
+Before the successful rebuild:
+
+```text
+GET /healthz             → 200
+GET /projects            → 404
+GET /api/judge/scores    → 404
+GET /api/export.csv      → 404
+```
+
+The source application already contained those routes and had passed its tests.
+
+##### Root Cause
+
+`docker compose build` had failed, so the image tagged `dogfood-dogfood:latest` was still the previous scaffold-era image.
+
+`docker compose up` does not guarantee that the current source has been rebuilt successfully.
+
+##### Decision
+
+For future checkpoints, differentiate explicitly between:
+
+```text
+Source verified
+        ↓
+Image successfully rebuilt
+        ↓
+Container successfully started
+        ↓
+Runtime acceptance verified
+```
+
+A failure at one layer must not automatically trigger changes at another layer.
+
+---
+
+#### Decision 5.3 — Preserve Fixture Path Compatibility Inside the Runtime Image
+
+The fixture loader already searches several valid locations, including:
+
+```text
+official/fixtures.json
+/official/fixtures.json
+/fixtures.json
+fixtures.json
+```
+
+For clarity and consistency with the repository layout, the final Docker runtime currently copies:
+
+```dockerfile
+COPY official/fixtures.json /official/fixtures.json
+```
+
+This keeps the canonical fixture identity obvious inside the container and avoids unnecessary path translation.
+
+This change was not the eventual root cause of the container restart loop; it is retained as a deployment-clarity decision.
+
+---
+
+#### Decision 5.4 — Stale Development SQLite Volume Must Not Be Confused With Migration-Code Failure
+
+After the latest Docker image built successfully, the container repeatedly exited with:
+
+```text
+migration failure:
+failed to retrieve applied migrations:
+SQL logic error:
+no such column: checksum_sha256
+```
+
+##### Root Cause
+
+The Docker named volume contained a SQLite database created by an earlier scaffold version of `schema_migrations`.
+
+That old development database predated the final migration-runner schema containing:
+
+```text
+checksum_sha256
+```
+
+The new application therefore correctly expected the finalized migration metadata schema, while the persisted development volume still contained the obsolete form.
+
+##### Decision
+
+Because this is a hackathon development database containing only reproducible seeded fixture data and no user-created production data, reset the obsolete volume instead of weakening the finalized migration design.
+
+Command:
+
+```powershell
+docker compose down -v --remove-orphans
+```
+
+Then:
+
+```powershell
+docker compose up -d
+```
+
+##### Why This Was Safe
+
+The database is deterministically reconstructible from:
+
+```text
+Migration 0001
++
+official fixtures.json
++
+seed_imports provenance
+```
+
+No unique user or production data existed in the discarded volume.
+
+This decision does **not** establish a general policy of deleting production databases when migrations change.
+
+A real production upgrade path would require an explicit migration from the historical schema.
+
+---
+
+#### Recovery Result
+
+After the stale volume was removed, the application started normally:
+
+```text
+opening SQLite database at /data/dogfood.db...
+running migrations...
+seeding fixtures...
+seeded fixtures for event evt_01:
+8 tracks
+40 teams
+41 projects
+
+server listening on :8080
+```
+
+The container reached:
+
+```text
+healthy
+```
+
+and `/healthz` returned:
+
+```json
+{"status":"ok"}
+```
+
+The public project gallery successfully rendered all 41 fixture projects, including:
+
+```text
+Glass Signal
+Small Meadow
+Deep Compass
+...
+```
+
+with track and team metadata.
+
+---
+
+#### Official Acceptance Verification
+
+The official Dogfood checker was run against the Docker-hosted application:
+
+```powershell
+python3.11 official/run.py .dogfood.toml
+```
+
+Final result:
+
+```text
+T1  gallery is public ................. PASS
+T1  project from fixtures shown ....... PASS
+T1  closed event refuses submissions .. PASS
+
+T2  judge sees own scores ............. PASS
+T2  judge cannot see peer scores ...... PASS
+T2  participant blocked ............... PASS
+T2  csv export works .................. PASS
+
+claimed T1 T2, verified T1 T2
+```
+
+Therefore the current vertical slice is verified through the actual Docker deployment, not only through Go unit/integration tests.
+
+---
+
+#### Engineering Lessons / Guardrails
+
+For future agents and contributors:
+
+1. Do not modify application logic merely because a Docker-hosted route differs from local behavior. First verify that the current source was actually built into the image.
+
+2. Keep `go.mod` and the Docker builder Go version synchronized.
+
+3. Treat the Docker image, persistent volume, and application source as separate state layers during debugging.
+
+4. Never delete persistent data merely to make a migration pass unless the environment is explicitly disposable and reconstructible.
+
+5. For this hackathon's seeded development environment, fixture-backed data is reproducible, so resetting an obsolete pre-production volume is acceptable.
+
+6. After any Docker/runtime repair, rerun the actual official checker rather than relying only on `/healthz` or unit tests.
+
+7. A successful `docker compose up` alone is not acceptance evidence.
+
+8. Maintain the distinction between:
+   - source correctness,
+   - build correctness,
+   - runtime correctness,
+   - official acceptance correctness.
+
+---
+
+#### Current Verified State
+
+```text
+Go toolchain alignment             PASS
+Docker image build                 PASS
+Migration bootstrap                PASS
+Fixture seeding                    PASS
+Container health                   PASS
+Public gallery                     PASS
+Backend role isolation             PASS
+CSV export                         PASS
+Official checker                   7 / 7 PASS
+Verified tiers                     T1 + T2 checker surface
+```
+
+Important: this proves the current official acceptance surface only. It does **not** mean the full manual T1/T2 product requirements are complete.
+
+Full T1 implementation, Migration 0002, complete judging functionality, normalization, result provenance, replay, hardening, and final offline-release verification remain later checkpoints.
+
+---
+
+#### Future Release Note
+
+A separate release checkpoint must still prove the stronger offline requirement:
+
+```text
+clean/reviewer environment
++
+no network
++
+documented startup path
++
+seeded working portal
+```
+
+The current acceptance result should not be misrepresented as proof of a completely clean offline rebuild.
+
+---
+
+### Checkpoint 6: Full T1 Core Lifecycle & Gallery Usability
+
+#### Context
+Following the First Real Vertical Slice, the full product lifecycle for Tier 1 was implemented: authentication and session UX, role-aware dashboard surfaces for participants, judges, and organizers, transactional team creation and join flows, team capacity limits (max 4 members), project draft editing, submission deadline enforcement, and public gallery usability.
+
+---
+
+#### Decision 6.1 — Transactional Team Capacity Guard (Maximum 4 Members)
+* **Problem**: In hackathons, team size limits (e.g. 4 members) are easily bypassed if multiple join requests are processed concurrently, or if capacity is only checked in UI logic.
+* **Solution**: In `handleJoinTeam`, capacity is checked inside an isolated SQLite transaction:
+  ```sql
+  SELECT COUNT(*) FROM team_memberships WHERE team_id = ? AND left_at IS NULL;
+  ```
+  If `count >= 4`, the transaction immediately aborts and returns HTTP 409 Conflict (`team has reached maximum capacity of 4 members`).
+* **Verification**: `TestT1_TeamCapacity_And_InviteReplayProtection` verifies that 4 members successfully join, but a 5th join attempt is rejected with HTTP 409.
+
+---
+
+#### Decision 6.2 — Single-Use Invite Tokens & Replay Defense
+* **Problem**: Replaying old invite links allows unauthorized users to join closed or full teams.
+* **Solution**: `team_invites` records `accepted_at`, `accepted_by`, `expires_at`, and `revoked_at`. Before joining, the invite is validated. Upon join, `accepted_at = nowUTC` is written in the same transaction. Reusing an accepted token fails with HTTP 400 Bad Request (`invite has already been used`).
+* **Verification**: `TestT1_TeamCapacity_And_InviteReplayProtection` verifies that reusing `invite_token_1` is rejected with 400.
+
+---
+
+#### Decision 6.3 — Collision-Resistant ID Generation via `crypto/rand`
+* **Problem**: Modulo time-based IDs (e.g. `time.Now().UnixNano() % 1000000`) caused SQLite primary key collisions in rapid unit tests executed within the same millisecond (`UNIQUE constraint failed: team_memberships.id`).
+* **Solution**: Implemented `newID(prefix)` utilizing `crypto/rand` with 8 random bytes (16 hex chars) formatted as `prefix_...` (e.g., `tm_3a2b1c4d...`, `mem_9e8f7a6b...`).
+* **Verification**: All concurrent test runs pass with zero ID collisions.
+
+---
+
+#### Decision 6.4 — Event Lifecycle Window Check Constraint Safety
+* **Problem**: Migration 0001 defines table check constraints:
+  ```sql
+  CONSTRAINT chk_events_submissions_window CHECK (submissions_open_at IS NULL OR submissions_close_at IS NULL OR submissions_open_at <= submissions_close_at)
+  ```
+  Updating `submissions_close_at` to a past timestamp without adjusting `submissions_open_at` causes SQLite to reject the update.
+* **Solution**: Handlers and tests update both window bounds synchronously, preserving window validity.
+
+---
+
+#### Decision 6.5 — Private Project Draft Protection
+* **Problem**: Projects in draft state must not be publicly exposed or editable by competing teams.
+* **Solution**: At `/api/projects/{id}`, if `state == 'DRAFT'`, the handler resolves the caller's identity:
+  - If unauthenticated: returns HTTP 401/403.
+  - If authenticated but not an active member of `project.team_id` (and not organizer): returns HTTP 403 Forbidden.
+  - Only when `state == 'SUBMITTED'` is the project publicly readable in the gallery.
+* **Verification**: `TestT1_ProjectDraft_And_SecurityInvariants` verifies that unauthenticated visitors and cross-team participants are blocked with 403.
+
+---
+
+#### Decision 6.6 — Clean, Restrained, Self-Contained Gallery Usability
+* **Problem**: Overly flashy "AI-generated" designs with external CDNs or heavy JS break the offline-first requirement and look non-credible.
+* **Solution**:
+  - Implemented clean, restrained GitHub/Linear-inspired dark theme in [`web/static/app.css`](file:///c:/Users/Administrator/Downloads/dogfood/web/static/app.css).
+  - Navigation header displaying event name and status badge (`● Submissions Closed` / `● Submissions Open`).
+  - Real-time client-side vanilla JavaScript instant search across project titles, summaries, and team IDs.
+  - Track filter pills allowing visitors to toggle between tracks (`All (41)`, `Security (8)`, `Accessibility (6)`, etc.).
+  - Native HTML5 `<dialog>` elements for modal details with zero JavaScript dependencies or CDN libraries.
+  - Strict preservation of all official fixture titles, IDs, summaries, and timestamps so that `official/run.py` retains 100% PASS.
+
+---
+
+### Checkpoint 7: Tier 1 Closure Patch (Admin Role, Event Lifecycle, Tracks & Prizes)
+
+#### Context
+Before advancing to Tier 2 (judging schema, rubrics, and ballots), this checkpoint explicitly closes and proves all manual Tier 1 specification requirements without initiating Migration 0002.
+
+---
+
+#### Decision 7.1 — Dual Admin/Organizer Authorization Model (`canAdminister`)
+* **Problem**: Official T1 requires an `admin` role alongside `organizer`. A user possessing exclusively the `admin` role must have administrative capabilities, while participants and judges must be rejected with HTTP 403 Forbidden.
+* **Solution**: Implemented `canAdminister(id *auth.Identity) bool` checking `id.HasRole("admin") || id.HasRole("organizer")`. Applied server-side on:
+  - Event creation (`POST /api/organizer/events`, `POST /api/events`)
+  - Event lifecycle modification (`POST /api/organizer/event`)
+  - Track configuration (`POST /api/organizer/tracks`)
+  - Prize configuration (`POST /api/organizer/prizes`)
+  - CSV results export (`GET /api/export.csv`)
+  - Peer score access bypass (`GET /api/judge/scores?judge=...`)
+* **Verification**: `TestT1_AdminRole_Authorization` proves a user with solely `admin` role has full administrative powers, while participants and judges receive 403 Forbidden.
+
+---
+
+#### Decision 7.2 — Spaced Forward Migration Strategy for Prizes (`0010_t1_prizes.sql`)
+* **Problem**: Official T1 requires configurable prizes per event and track. Modifying `0001_t1_core.sql` would violate checksum immutability. Furthermore, naming it `0002` would conflict with Migration 0002 reserved for T2 judging.
+* **Solution**: Implemented spaced versioning: `internal/migrations/0010_t1_prizes.sql` (Version 10). T1 forward patches reside in 1–19, reserving 20+ (`0020_t2_judging.sql`) for T2 judging.
+* **Verification**: `TestMigration0001_RealSchema` and runner tests verify all 12 tables exist, with zero T2 tables.
+
+---
+
+#### Decision 7.3 — Robust Event Date Window Validation & Check Constraint Protection
+* **Problem**: SQLite check constraints (`chk_events_submissions_window`, etc.) reject records where `open > close`. Unchecked inputs produce internal server errors instead of client-friendly 400 Bad Request errors.
+* **Solution**: Built `validateDateOrder(open, close, label)` validating RFC3339 format and ensuring `open <= close`. Handlers merge existing event dates with submitted updates before validating, returning HTTP 400 Bad Request on violation.
+* **Verification**: `TestT1_EventCreation_And_DateValidation` asserts that invalid date ordering in creation or update yields HTTP 400 Bad Request.
+
+---
+
+#### Decision 7.4 — Complete Draft to Submitted Public Lifecycle
+* **Problem**: End-to-end proof was needed to demonstrate that a project starts as a private team draft, can be iteratively updated with version increments, transitions to submitted prior to the deadline, and immediately surfaces in the public gallery.
+* **Solution**: Integration test `TestT1_FullSubmissionLifecycle_HappyPath` proves:
+  1. Team creates draft -> state is `DRAFT`.
+  2. Public gallery does not contain the draft.
+  3. Team edits draft with updated metadata.
+  4. Team submits before deadline -> transitions to `SUBMITTED`.
+  5. Unauthenticated visitor immediately sees the project in `/projects` and `/api/projects/{id}`.
+  6. Official fixture projects (`Glass Signal`) remain unperturbed.
+
+---
+
 ## 4. Verification Matrix
 
 | Checkpoint | Verified Property | Exact Command / Test | Status |
@@ -167,12 +616,27 @@ flowchart TD
 | **Migration** | Empty DB execution | `TestRunner_EmptyDB` | **PASS** |
 | **Migration** | Idempotency | `TestRunner_AppliesMigrationsAndIdempotency` | **PASS** |
 | **Migration** | Checksum drift protection | `TestRunner_ChecksumMismatchFails` | **PASS** |
-| **Migration** | T1 tables exist & T2 absent | `TestMigration0001_RealSchema` | **PASS** (11 tables verified, 0 T2 tables) |
+| **Migration** | T1 tables exist & T2 absent | `TestMigration0001_RealSchema` | **PASS** (12 tables verified, 0 T2 tables) |
 | **Migration** | Foreign key enforcement | `PRAGMA foreign_keys = ON;` in `TestMigration0001_RealSchema` | **PASS** (invalid FK rejected) |
 | **Seeding** | Exact entity counts | `TestSeed_OfficialFixtures` | **PASS** (1 evt, 8 trk, 40 tm, 41 prj, 122 usr, 4 ses) |
 | **Seeding** | Duplicate candidate preservation | `SELECT COUNT(*) FROM projects WHERE team_id = 'tm_07'` | **PASS** (exactly 2 preserved) |
 | **Seeding** | Second boot no-op | `Load` re-run in `TestSeed_OfficialFixtures` | **PASS** (`AlreadySeeded = true`, 0 duplicates) |
 | **Seeding** | Hash mismatch defense | Mutated data in `TestSeed_OfficialFixtures` | **PASS** (rejected with clear error) |
+| **T1 Auth** | Session lifecycle & cookies | `TestT1_AuthAndSessionFlow` | **PASS** |
+| **T1 Teams** | Max 4 capacity & single-use invite | `TestT1_TeamCapacity_And_InviteReplayProtection` | **PASS** (409 on full, 400 on replay) |
+| **T1 Drafts** | Private draft isolation | `TestT1_ProjectDraft_And_SecurityInvariants` | **PASS** (403 for non-members & late edits) |
+| **T1 Admin** | Pure admin access & participant 403 | `TestT1_AdminRole_Authorization` | **PASS** (Admin allowed, Part/Judge 403) |
+| **T1 Events** | Event creation & date validation | `TestT1_EventCreation_And_DateValidation` | **PASS** (201 created, 400 on bad dates) |
+| **T1 Tracks** | Track & Prize configuration | `TestT1_TrackAndPrize_Configuration` | **PASS** (Tracks & Prizes configured & queried) |
+| **T1 E2E** | Full draft to submit lifecycle | `TestT1_FullSubmissionLifecycle_HappyPath` | **PASS** (Draft -> Edit -> Submit -> Public) |
+| **Checker** | T1: Gallery is public | `python official/run.py .dogfood.toml` | **PASS** (HTTP 200) |
+| **Checker** | T1: Fixture projects shown | `python official/run.py .dogfood.toml` | **PASS** ("Glass Signal" present) |
+| **Checker** | T1: Closed event refuses submissions | `python official/run.py .dogfood.toml` | **PASS** (HTTP 403) |
+| **Checker** | T2: Judge sees own scores | `python official/run.py .dogfood.toml` | **PASS** (HTTP 200) |
+| **Checker** | T2: Judge cannot see peer scores | `python official/run.py .dogfood.toml` | **PASS** (HTTP 403) |
+| **Checker** | T2: Participant blocked | `python official/run.py .dogfood.toml` | **PASS** (HTTP 403) |
+| **Checker** | T2: CSV export works | `python official/run.py .dogfood.toml` | **PASS** (HTTP 200, comma header) |
+| **Checker** | Full Acceptance Suite | `python official/run.py .dogfood.toml` | **PASS** (`claimed T1 T2, verified T1 T2`) |
 
 ---
 

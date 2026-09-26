@@ -97,7 +97,7 @@ func Run(ctx context.Context, db *sql.DB, explicitPath string) (*Result, error) 
 		if envPath := os.Getenv("FIXTURE_PATH"); envPath != "" {
 			paths = append(paths, envPath)
 		}
-		paths = append(paths, "official/fixtures.json", "/fixtures.json", "fixtures.json")
+		paths = append(paths, "official/fixtures.json", "/official/fixtures.json", "/fixtures.json", "fixtures.json")
 	}
 
 	var foundPath string
@@ -291,6 +291,9 @@ func Load(ctx context.Context, db *sql.DB, sourceName string, data []byte) (*Res
 		emailToUserID[organizerEmail] = organizerID
 		if _, err := roleStmt.ExecContext(ctx, fixture.Event.ID, organizerID, "organizer", "2026-02-01T00:00:00Z"); err != nil {
 			return nil, fmt.Errorf("failed to assign organizer role: %w", err)
+		}
+		if _, err := roleStmt.ExecContext(ctx, fixture.Event.ID, organizerID, "admin", "2026-02-01T00:00:00Z"); err != nil {
+			return nil, fmt.Errorf("failed to assign admin role: %w", err)
 		}
 	}
 
