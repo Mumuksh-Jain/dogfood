@@ -1,40 +1,36 @@
-# Binaries and executables
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Build output
 bin/
+tmp/
 dist/
 
-# Test binary, built with `go test -c`
+# Go
+vendor/
+coverage.out
 *.test
 
-# Output of the go coverage tool
-*.out
-
-# Go workspace file
-go.work
-
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-venv/
-.venv/
-
-# Environment and secrets
-.env
-*.local
-
-# IDE and Editor
-.idea/
+# IDE
 .vscode/
+.idea/
 *.swp
-*.swo
-*~
 
-# OS generated files
+# OS
 .DS_Store
 Thumbs.db
-desktop.ini
+
+# Logs
+*.log
+
+# Local evidence/debug folders
+tmp-evidence/

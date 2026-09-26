@@ -1,19 +1,19 @@
 # STATE
 
 ## Current phase
-H0
+SCAFFOLD
 
 ## Last checkpoint passed
-H0 contract delta check complete. No material changes.
+H0 delta gate
 
 ## Current blocker
-None.
+none
 
 ## Last checker output
-Diagnostic baseline only. No real application acceptance run yet.
+not run
 
 ## Next action
-Implement migration 0001 and the first vertical slice.
+Create minimum Go application scaffold.
 
 ## Known deltas since H0
 None.
@@ -23,6 +23,7 @@ None.
 - F1.1 architecture freeze: complete
 - Migration manifest: complete
 - Environment preparation: complete
+- Directory structure: initialized (no code)
 - Real project code: not started
 - T1: not started
 - T2: not started
