@@ -1,10 +1,10 @@
 # STATE
 
 ## Current phase
-PRE-H0
+H0
 
 ## Last checkpoint passed
-F1.1 pre-build freeze complete.
+H0 contract delta check complete. No material changes.
 
 ## Current blocker
 None.
@@ -13,10 +13,10 @@ None.
 Diagnostic baseline only. No real application acceptance run yet.
 
 ## Next action
-At H0: run the 20-minute contract delta check, record changes in DELTA_LOG.md, confirm toolchain, then implement migration 0001 and the first vertical slice.
+Implement migration 0001 and the first vertical slice.
 
 ## Known deltas since H0
-Not applicable yet.
+None.
 
 ## Build status
 - Contract research: complete
