@@ -65,6 +65,9 @@
                     Verify Independent Replay
                 </button>
                 {{if .IsOrganizer}}
+                    <a href="/api/v1/export.csv" class="btn btn-secondary" download>
+                        ⬇ Export Standings (CSV)
+                    </a>
                     {{if eq .Run.Status "DRAFT"}}
                     <button type="button" class="btn btn-primary" onclick="publishResults('{{.Run.ID}}')">Publish Official Results</button>
                     {{else}}

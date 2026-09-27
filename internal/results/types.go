@@ -54,13 +54,14 @@ type ResultEntry struct {
 	Explanation      *ExplanationPayload `json:"explanation,omitempty"`
 
 	// Enriched view fields
-	ProjectTitle string `json:"project_title,omitempty"`
+	ProjectTitle   string `json:"project_title,omitempty"`
 	ProjectSummary string `json:"project_summary,omitempty"`
-	TrackID      string `json:"track_id,omitempty"`
-	TrackName    string `json:"track_name,omitempty"`
-	TeamName     string `json:"team_name,omitempty"`
-	RepoURL      string `json:"repo_url,omitempty"`
-	DemoURL      string `json:"demo_url,omitempty"`
+	TeamID         string `json:"team_id,omitempty"`
+	TrackID        string `json:"track_id,omitempty"`
+	TrackName      string `json:"track_name,omitempty"`
+	TeamName       string `json:"team_name,omitempty"`
+	RepoURL        string `json:"repo_url,omitempty"`
+	DemoURL        string `json:"demo_url,omitempty"`
 }
 
 // JudgeCohortStats holds summary statistics for a judge's completed evaluation cohort.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -353,53 +352,95 @@ func NewServer(cfg Config) (*Server, error) {
 	// 6. Submission endpoints
 	mux.HandleFunc("POST /projects/new", s.handleSubmit) // compatibility with run.py probe
 	mux.HandleFunc("POST /api/projects", s.handleCreateProject)
+	mux.HandleFunc("POST /api/v1/projects", s.handleCreateProject)
+	mux.HandleFunc("GET /api/projects", s.handleListProjectsAPI)
+	mux.HandleFunc("GET /api/v1/projects", s.handleListProjectsAPI)
 	mux.HandleFunc("POST /api/projects/{id}/edit", s.handleEditProject)
+	mux.HandleFunc("POST /api/v1/projects/{id}/edit", s.handleEditProject)
 	mux.HandleFunc("POST /api/projects/{id}/submit", s.handleSubmitProject)
+	mux.HandleFunc("POST /api/v1/projects/{id}/submit", s.handleSubmitProject)
 	mux.HandleFunc("GET /api/projects/{id}", s.handleGetProjectAPI)
+	mux.HandleFunc("GET /api/v1/projects/{id}", s.handleGetProjectAPI)
 
 	// 7. Teams & Invites
+	mux.HandleFunc("GET /api/teams", s.handleListTeamsAPI)
+	mux.HandleFunc("GET /api/v1/teams", s.handleListTeamsAPI)
 	mux.HandleFunc("POST /api/teams", s.handleCreateTeam)
+	mux.HandleFunc("POST /api/v1/teams", s.handleCreateTeam)
 	mux.HandleFunc("POST /api/teams/{id}/invites", s.handleCreateInvite)
+	mux.HandleFunc("POST /api/v1/teams/{id}/invites", s.handleCreateInvite)
 	mux.HandleFunc("GET /teams/join", s.handleJoinTeam)
 	mux.HandleFunc("POST /teams/join", s.handleJoinTeam)
 	mux.HandleFunc("POST /api/teams/join", s.handleJoinTeam)
+	mux.HandleFunc("POST /api/v1/teams/join", s.handleJoinTeam)
 
 	// 8. Event configuration (organizer / admin)
 	mux.HandleFunc("POST /api/organizer/events", s.handleCreateEvent)
+	mux.HandleFunc("POST /api/v1/organizer/events", s.handleCreateEvent)
 	mux.HandleFunc("POST /api/events", s.handleCreateEvent)
+	mux.HandleFunc("POST /api/v1/events", s.handleCreateEvent)
 	mux.HandleFunc("POST /api/organizer/event", s.handleUpdateEvent)
+	mux.HandleFunc("POST /api/v1/organizer/event", s.handleUpdateEvent)
 	mux.HandleFunc("GET /api/tracks", s.handleGetTracks)
+	mux.HandleFunc("GET /api/v1/tracks", s.handleGetTracks)
 	mux.HandleFunc("POST /api/organizer/tracks", s.handleCreateTrack)
+	mux.HandleFunc("POST /api/v1/organizer/tracks", s.handleCreateTrack)
 	mux.HandleFunc("GET /api/prizes", s.handleGetPrizes)
+	mux.HandleFunc("GET /api/v1/prizes", s.handleGetPrizes)
 	mux.HandleFunc("POST /api/organizer/prizes", s.handleCreatePrize)
+	mux.HandleFunc("POST /api/v1/organizer/prizes", s.handleCreatePrize)
 
 	// 9. Judge score routes (peer isolation & role enforcement)
 	mux.HandleFunc("GET /api/judge/scores", s.handleJudgeScores)
+	mux.HandleFunc("GET /api/v1/judge/scores", s.handleJudgeScores)
 
-	// 10. CSV export route (organizer role enforcement)
+	// 10. CSV export routes (organizer role enforcement & formula defense)
 	mux.HandleFunc("GET /api/export.csv", s.handleCSVExport)
+	mux.HandleFunc("GET /api/v1/export.csv", s.handleCSVExport)
+	mux.HandleFunc("GET /api/export/results.csv", s.handleCSVExport)
+	mux.HandleFunc("GET /api/v1/export/results.csv", s.handleCSVExport)
+	mux.HandleFunc("GET /api/export/ballots.csv", s.handleCSVExport)
+	mux.HandleFunc("GET /api/v1/export/ballots.csv", s.handleCSVExport)
+	mux.HandleFunc("GET /api/export/evaluations.csv", s.handleCSVExport)
+	mux.HandleFunc("GET /api/v1/export/evaluations.csv", s.handleCSVExport)
+	mux.HandleFunc("GET /api/export/projects.csv", s.handleCSVExport)
+	mux.HandleFunc("GET /api/v1/export/projects.csv", s.handleCSVExport)
 
 	// 11. Evaluations & Rubrics (T2 judging lifecycle)
 	mux.HandleFunc("GET /evaluations/{id}", s.handleEvaluationPage)
 	mux.HandleFunc("POST /evaluations/{id}", s.handleEvaluationSubmit)
 	mux.HandleFunc("GET /api/assignments/{id}/ballot", s.handleGetBallotAPI)
+	mux.HandleFunc("GET /api/v1/assignments/{id}/ballot", s.handleGetBallotAPI)
 	mux.HandleFunc("POST /api/assignments/{id}/ballot", s.handleSaveDraftBallotAPI)
+	mux.HandleFunc("POST /api/v1/assignments/{id}/ballot", s.handleSaveDraftBallotAPI)
 	mux.HandleFunc("POST /api/assignments/{id}/ballot/submit", s.handleSubmitBallotAPI)
+	mux.HandleFunc("POST /api/v1/assignments/{id}/ballot/submit", s.handleSubmitBallotAPI)
 	mux.HandleFunc("GET /api/events/{event_id}/rubric", s.handleGetRubricAPI)
+	mux.HandleFunc("GET /api/v1/events/{event_id}/rubric", s.handleGetRubricAPI)
 	mux.HandleFunc("POST /api/events/{event_id}/rubrics", s.handleCreateRubricDraftAPI)
+	mux.HandleFunc("POST /api/v1/events/{event_id}/rubrics", s.handleCreateRubricDraftAPI)
 	mux.HandleFunc("POST /api/rubrics/{rubric_version_id}/publish", s.handlePublishRubricAPI)
+	mux.HandleFunc("POST /api/v1/rubrics/{rubric_version_id}/publish", s.handlePublishRubricAPI)
 	mux.HandleFunc("POST /api/organizer/assignments/run", s.handleRunAssignments)
+	mux.HandleFunc("POST /api/v1/organizer/assignments/run", s.handleRunAssignments)
  
 	// 12. Results, Leaderboard & Explain-This-Rank Auditability
 	mux.HandleFunc("GET /results", s.handleResultsPage)
 	mux.HandleFunc("GET /results/{run_id}/projects/{project_id}", s.handleExplainRankPage)
 	mux.HandleFunc("POST /api/organizer/results/compute", s.handleComputeResults)
+	mux.HandleFunc("POST /api/v1/organizer/results/compute", s.handleComputeResults)
 	mux.HandleFunc("POST /api/organizer/results/{id}/publish", s.handlePublishResults)
+	mux.HandleFunc("POST /api/v1/organizer/results/{id}/publish", s.handlePublishResults)
 	mux.HandleFunc("GET /api/results", s.handleGetActiveResultsAPI)
+	mux.HandleFunc("GET /api/v1/results", s.handleGetActiveResultsAPI)
 	mux.HandleFunc("GET /api/results/{run_id}/projects/{project_id}", s.handleGetExplanationAPI)
+	mux.HandleFunc("GET /api/v1/results/{run_id}/projects/{project_id}", s.handleGetExplanationAPI)
 	mux.HandleFunc("GET /api/results/{run_id}/replay", s.handleReplayAPI)
+	mux.HandleFunc("GET /api/v1/results/{run_id}/replay", s.handleReplayAPI)
 	mux.HandleFunc("POST /api/results/{run_id}/replay", s.handleReplayAPI)
+	mux.HandleFunc("POST /api/v1/results/{run_id}/replay", s.handleReplayAPI)
 	mux.HandleFunc("GET /api/results/{run_id}/replay/{project_id}", s.handleReplayProjectAPI)
+	mux.HandleFunc("GET /api/v1/results/{run_id}/replay/{project_id}", s.handleReplayProjectAPI)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	s.httpServer = &http.Server{
@@ -2787,57 +2828,85 @@ func (s *Server) handleRunAssignments(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/dashboard?msg="+url.QueryEscape("Deterministic judge assignments generated successfully."), http.StatusSeeOther)
 }
 
-func (s *Server) handleCSVExport(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleListProjectsAPI(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		http.Error(w, "database unavailable", http.StatusInternalServerError)
 		return
 	}
 
-	// 1. Authenticate caller
-	id, err := auth.Authenticate(r.Context(), s.db, r)
-	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusUnauthorized)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
-		return
-	}
-
-	// 2. Enforce Organizer / Admin role
-	if !canAdminister(id) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: admin or organizer role required"})
-		return
-	}
+	trackFilter := r.URL.Query().Get("track")
 
 	query := `
-	SELECT p.id, s.title, p.team_id, t.name, s.submitted_at
+	SELECT p.id, p.team_id, p.track_id, t.name, s.title, s.summary, COALESCE(s.repo_url, ''), COALESCE(s.demo_url, ''), s.state, s.version_no, COALESCE(s.submitted_at, s.created_at)
 	FROM projects p
-	JOIN submissions s ON p.id = s.project_id AND s.state = 'SUBMITTED'
 	JOIN tracks t ON p.track_id = t.id
-	ORDER BY p.id ASC;`
+	JOIN submissions s ON p.id = s.project_id
+	WHERE s.version_no = (SELECT MAX(version_no) FROM submissions WHERE project_id = p.id)
+	  AND s.state = 'SUBMITTED'`
 
-	rows, err := s.db.QueryContext(r.Context(), query)
+	var args []any
+	if trackFilter != "" {
+		query += " AND (t.id = ? OR t.name = ?)"
+		args = append(args, trackFilter, trackFilter)
+	}
+	query += " ORDER BY s.submitted_at DESC;"
+
+	rows, err := s.db.QueryContext(r.Context(), query, args...)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-
-	writer := csv.NewWriter(w)
-	// Header must contain a comma
-	_ = writer.Write([]string{"project_id", "title", "team_id", "track", "submitted_at"})
-
+	var projects []ProjectView
 	for rows.Next() {
-		var pID, title, teamID, trackName, subAt string
-		if err := rows.Scan(&pID, &title, &teamID, &trackName, &subAt); err == nil {
-			_ = writer.Write([]string{pID, title, teamID, trackName, subAt})
+		var pv ProjectView
+		if err := rows.Scan(&pv.ID, &pv.TeamID, &pv.TrackID, &pv.TrackName, &pv.Title, &pv.Summary, &pv.RepoURL, &pv.DemoURL, &pv.State, &pv.VersionNo, &pv.SubmittedAt); err == nil {
+			pv.FormattedDate = formatDate(pv.SubmittedAt)
+			projects = append(projects, pv)
 		}
 	}
-	writer.Flush()
+	if projects == nil {
+		projects = []ProjectView{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(projects)
+}
+
+func (s *Server) handleListTeamsAPI(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		http.Error(w, "database unavailable", http.StatusInternalServerError)
+		return
+	}
+
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT t.id, t.name, t.created_at, u.display_name, COUNT(DISTINCT m.user_id)
+		FROM teams t
+		JOIN users u ON t.created_by = u.id
+		LEFT JOIN team_memberships m ON t.id = m.team_id AND m.left_at IS NULL
+		GROUP BY t.id, t.name, t.created_at, u.display_name
+		ORDER BY t.name ASC;
+	`)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var teams []OrganizerTeamView
+	for rows.Next() {
+		var tv OrganizerTeamView
+		if err := rows.Scan(&tv.ID, &tv.Name, &tv.CreatedAt, &tv.LeadName, &tv.MemberCount); err == nil {
+			teams = append(teams, tv)
+		}
+	}
+	if teams == nil {
+		teams = []OrganizerTeamView{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(teams)
 }
 
 // --- Results, Leaderboard, & Explain-This-Rank Handlers ---

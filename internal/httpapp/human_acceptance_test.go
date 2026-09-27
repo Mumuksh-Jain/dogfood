@@ -2,11 +2,13 @@ package httpapp
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1288,6 +1290,315 @@ func TestHumanAcceptance_FlowH_ResultsAndExplainRank(t *testing.T) {
 	handler.ServeHTTP(rrProjReplay, reqProjReplay)
 	if rrProjReplay.Code != http.StatusOK {
 		t.Fatalf("expected 200 on project replay, got %d", rrProjReplay.Code)
+	}
+}
+
+// TestHumanAcceptance_FlowI_CSVExport_And_APIFirst tests the comprehensive auditable CSV export
+// and API-First consistency (T2 Checkpoint 5).
+func TestHumanAcceptance_FlowI_CSVExport_And_APIFirst(t *testing.T) {
+	db := setupSeededDB(t)
+	server, err := NewServer(Config{Port: 8080, DB: db})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	handler := server.Handler()
+
+	// 1. Authenticate Demo Personas
+	login := func(persona string) *http.Cookie {
+		form := url.Values{"demo_user": {persona}}.Encode()
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusSeeOther {
+			t.Fatalf("login %s failed: %d", persona, rr.Code)
+		}
+		for _, c := range rr.Result().Cookies() {
+			if c.Name == "session" {
+				return c
+			}
+		}
+		t.Fatalf("session cookie missing for %s", persona)
+		return nil
+	}
+
+	cookieOrg := login("organizer")
+	cookiePart := login("participant_a")
+	cookieJudge := login("judge_a")
+
+	// 2. Strict Role Isolation on CSV export endpoints
+	csvEndpoints := []string{
+		"/api/export.csv",
+		"/api/v1/export.csv",
+		"/api/export/results.csv",
+		"/api/v1/export/results.csv",
+		"/api/export/evaluations.csv",
+		"/api/v1/export/evaluations.csv",
+		"/api/export/projects.csv",
+		"/api/v1/export/projects.csv",
+	}
+
+	for _, ep := range csvEndpoints {
+		// Anonymous receives 401
+		reqAnon := httptest.NewRequest(http.MethodGet, ep, nil)
+		rrAnon := httptest.NewRecorder()
+		handler.ServeHTTP(rrAnon, reqAnon)
+		if rrAnon.Code != http.StatusUnauthorized {
+			t.Errorf("%s: anonymous expected 401, got %d", ep, rrAnon.Code)
+		}
+
+		// Participant receives 403
+		reqPart := httptest.NewRequest(http.MethodGet, ep, nil)
+		reqPart.AddCookie(cookiePart)
+		rrPart := httptest.NewRecorder()
+		handler.ServeHTTP(rrPart, reqPart)
+		if rrPart.Code != http.StatusForbidden {
+			t.Errorf("%s: participant expected 403, got %d", ep, rrPart.Code)
+		}
+
+		// Judge receives 403
+		reqJudge := httptest.NewRequest(http.MethodGet, ep, nil)
+		reqJudge.AddCookie(cookieJudge)
+		rrJudge := httptest.NewRecorder()
+		handler.ServeHTTP(rrJudge, reqJudge)
+		if rrJudge.Code != http.StatusForbidden {
+			t.Errorf("%s: judge expected 403, got %d", ep, rrJudge.Code)
+		}
+	}
+
+	// 3. Organizer exports initial projects CSV (before results computation)
+	reqInitCSV := httptest.NewRequest(http.MethodGet, "/api/export.csv", nil)
+	reqInitCSV.AddCookie(cookieOrg)
+	rrInitCSV := httptest.NewRecorder()
+	handler.ServeHTTP(rrInitCSV, reqInitCSV)
+
+	if rrInitCSV.Code != http.StatusOK {
+		t.Fatalf("organizer initial CSV export failed: %d: %s", rrInitCSV.Code, rrInitCSV.Body.String())
+	}
+	initBody := rrInitCSV.Body.String()
+	initLines := strings.Split(initBody, "\n")
+	if len(initLines) == 0 || !strings.Contains(initLines[0], ",") {
+		t.Fatalf("expected comma in first line of initial export, got: %q", initBody)
+	}
+
+	initReader := csv.NewReader(strings.NewReader(initBody))
+	initRecords, err := initReader.ReadAll()
+	if err != nil {
+		t.Fatalf("initial CSV parse failed: %v", err)
+	}
+	if len(initRecords) < 2 {
+		t.Fatalf("expected at least header and one data row in initial export, got %d", len(initRecords))
+	}
+
+	// 4. Deterministic assignment and judge evaluation with multiline, quotes, commas
+	reqRun := httptest.NewRequest(http.MethodPost, "/api/v1/organizer/assignments/run", nil)
+	reqRun.AddCookie(cookieOrg)
+	rrRun := httptest.NewRecorder()
+	handler.ServeHTTP(rrRun, reqRun)
+	if rrRun.Code != http.StatusSeeOther && rrRun.Code != http.StatusOK {
+		t.Fatalf("assignments run failed: %d", rrRun.Code)
+	}
+
+	var asgnID string
+	_ = db.QueryRow("SELECT id FROM assignments WHERE judge_user_id = 'jdg_01' LIMIT 1;").Scan(&asgnID)
+	if asgnID == "" {
+		t.Fatalf("no assignment found for jdg_01")
+	}
+
+	multilineComment := "Exceptional work, especially on the backend architecture!\n\"Production-ready quality.\"\nStrongly recommend for award consideration."
+	ballotPayload := map[string]any{
+		"scores": map[string]float64{
+			"functionality": 4.5,
+			"quality":       4.0,
+			"innovation":    4.5,
+			"impact":        4.0,
+		},
+		"comment": multilineComment,
+	}
+	payloadBytes, _ := json.Marshal(ballotPayload)
+	reqBallot := httptest.NewRequest(http.MethodPost, "/api/v1/assignments/"+asgnID+"/ballot/submit", strings.NewReader(string(payloadBytes)))
+	reqBallot.AddCookie(cookieJudge)
+	reqBallot.Header.Set("Content-Type", "application/json")
+	rrBallot := httptest.NewRecorder()
+	handler.ServeHTTP(rrBallot, reqBallot)
+	if rrBallot.Code != http.StatusOK {
+		t.Fatalf("ballot submit failed: %d: %s", rrBallot.Code, rrBallot.Body.String())
+	}
+
+	// 5. Organizer exports evaluations CSV and verifies RFC 4180 multiline/escaping
+	reqEvalCSV := httptest.NewRequest(http.MethodGet, "/api/v1/export/evaluations.csv", nil)
+	reqEvalCSV.AddCookie(cookieOrg)
+	rrEvalCSV := httptest.NewRecorder()
+	handler.ServeHTTP(rrEvalCSV, reqEvalCSV)
+
+	if rrEvalCSV.Code != http.StatusOK {
+		t.Fatalf("evaluations export failed: %d: %s", rrEvalCSV.Code, rrEvalCSV.Body.String())
+	}
+	evalBody := rrEvalCSV.Body.String()
+	evalReader := csv.NewReader(strings.NewReader(evalBody))
+	evalRecords, err := evalReader.ReadAll()
+	if err != nil {
+		t.Fatalf("evaluations CSV parse failed: %v", err)
+	}
+	if len(evalRecords) < 2 {
+		t.Fatalf("expected evaluations records, got %d", len(evalRecords))
+	}
+
+	// Confirm comment was properly preserved across multiline/quotes
+	foundComment := false
+	for _, rec := range evalRecords[1:] {
+		if rec[9] == multilineComment {
+			foundComment = true
+			break
+		}
+	}
+	if !foundComment {
+		t.Errorf("multiline comment with quotes was not preserved cleanly in evaluations CSV")
+	}
+
+	// 6. Inject formula payload into a submission to verify Failure Case F21 defense
+	formulaTitle := "=CMD|' /C calc'!A0"
+	_, err = db.Exec(`
+		UPDATE submissions
+		SET title = ?
+		WHERE project_id = 'prj_01' AND version_no = (SELECT MAX(version_no) FROM submissions WHERE project_id = 'prj_01');
+	`, formulaTitle)
+	if err != nil {
+		t.Fatalf("failed to inject formula payload: %v", err)
+	}
+
+	// 7. Organizer computes and publishes results
+	reqCompute := httptest.NewRequest(http.MethodPost, "/api/v1/organizer/results/compute", nil)
+	reqCompute.AddCookie(cookieOrg)
+	rrCompute := httptest.NewRecorder()
+	handler.ServeHTTP(rrCompute, reqCompute)
+	if rrCompute.Code != http.StatusOK {
+		t.Fatalf("compute results failed: %d: %s", rrCompute.Code, rrCompute.Body.String())
+	}
+	var resRun struct {
+		ID          string `json:"id"`
+		InputDigest string `json:"input_digest"`
+	}
+	_ = json.NewDecoder(rrCompute.Body).Decode(&resRun)
+
+	reqPublish := httptest.NewRequest(http.MethodPost, "/api/v1/organizer/results/"+resRun.ID+"/publish", nil)
+	reqPublish.AddCookie(cookieOrg)
+	rrPublish := httptest.NewRecorder()
+	handler.ServeHTTP(rrPublish, reqPublish)
+	if rrPublish.Code != http.StatusOK {
+		t.Fatalf("publish results failed: %d: %s", rrPublish.Code, rrPublish.Body.String())
+	}
+
+	// 8. Organizer exports full standings CSV
+	reqStandings := httptest.NewRequest(http.MethodGet, "/api/v1/export.csv", nil)
+	reqStandings.AddCookie(cookieOrg)
+	rrStandings := httptest.NewRecorder()
+	handler.ServeHTTP(rrStandings, reqStandings)
+
+	if rrStandings.Code != http.StatusOK {
+		t.Fatalf("standings export failed: %d: %s", rrStandings.Code, rrStandings.Body.String())
+	}
+	if !strings.HasPrefix(rrStandings.Header().Get("Content-Type"), "text/csv") {
+		t.Errorf("expected Content-Type text/csv, got %q", rrStandings.Header().Get("Content-Type"))
+	}
+	expectedFilename := fmt.Sprintf("results_%s.csv", resRun.ID)
+	if !strings.Contains(rrStandings.Header().Get("Content-Disposition"), expectedFilename) {
+		t.Errorf("expected Content-Disposition with %s, got %q", expectedFilename, rrStandings.Header().Get("Content-Disposition"))
+	}
+
+	standingsBody := rrStandings.Body.String()
+	standingsReader := csv.NewReader(strings.NewReader(standingsBody))
+	standingsRecords, err := standingsReader.ReadAll()
+	if err != nil {
+		t.Fatalf("standings CSV parse failed: %v", err)
+	}
+
+	// Verify header has 17 stable reconciliation columns
+	expectedHeader := []string{
+		"rank", "project_id", "title", "team_id", "team_name", "track_id", "track_name",
+		"final_score", "raw_score", "expected_reviews", "completed_reviews", "effective_reviews",
+		"fallback_count", "tie_group", "result_run_id", "input_digest", "published_at",
+	}
+	header := standingsRecords[0]
+	if len(header) != len(expectedHeader) {
+		t.Fatalf("expected %d columns, got %d", len(expectedHeader), len(header))
+	}
+	for i, col := range expectedHeader {
+		if header[i] != col {
+			t.Errorf("col %d: expected %q, got %q", i, col, header[i])
+		}
+	}
+
+	// Verify formula injection sanitization and stable IDs
+	foundPrj1 := false
+	for _, row := range standingsRecords[1:] {
+		if row[1] == "prj_01" {
+			foundPrj1 = true
+			if !strings.HasPrefix(row[2], "'=") {
+				t.Errorf("formula injection defense failed: expected '= prefix, got %q", row[2])
+			}
+			if row[14] != resRun.ID {
+				t.Errorf("result_run_id mismatch: expected %s, got %s", resRun.ID, row[14])
+			}
+			if row[15] != resRun.InputDigest {
+				t.Errorf("input_digest mismatch: expected %s, got %s", resRun.InputDigest, row[15])
+			}
+			// Verify numeric values parse cleanly
+			if _, err := strconv.Atoi(row[0]); err != nil {
+				t.Errorf("rank %q is not a valid integer", row[0])
+			}
+			if _, err := strconv.ParseFloat(row[7], 64); err != nil {
+				t.Errorf("final_score %q is not a valid float", row[7])
+			}
+		}
+	}
+	if !foundPrj1 {
+		t.Errorf("prj_01 not found in standings export")
+	}
+
+	// 9. API-First Consistency
+	// Compare /api/v1/... and legacy /api/... routes
+	apiChecks := []struct {
+		v1Path string
+		legacy string
+	}{
+		{"/api/v1/projects", "/api/projects"},
+		{"/api/v1/teams", "/api/teams"},
+		{"/api/v1/tracks", "/api/tracks"},
+		{"/api/v1/prizes", "/api/prizes"},
+		{"/api/v1/results", "/api/results"},
+	}
+
+	for _, check := range apiChecks {
+		reqV1 := httptest.NewRequest(http.MethodGet, check.v1Path, nil)
+		rrV1 := httptest.NewRecorder()
+		handler.ServeHTTP(rrV1, reqV1)
+
+		reqLegacy := httptest.NewRequest(http.MethodGet, check.legacy, nil)
+		rrLegacy := httptest.NewRecorder()
+		handler.ServeHTTP(rrLegacy, reqLegacy)
+
+		if rrV1.Code != rrLegacy.Code {
+			t.Errorf("code mismatch for %s: v1=%d legacy=%d", check.v1Path, rrV1.Code, rrLegacy.Code)
+		}
+		if rrV1.Body.String() != rrLegacy.Body.String() {
+			t.Errorf("body mismatch between %s and %s", check.v1Path, check.legacy)
+		}
+	}
+
+	// 10. Replay verification via /api/v1/results/{run_id}/replay
+	reqReplay := httptest.NewRequest(http.MethodGet, "/api/v1/results/"+resRun.ID+"/replay", nil)
+	rrReplay := httptest.NewRecorder()
+	handler.ServeHTTP(rrReplay, reqReplay)
+	if rrReplay.Code != http.StatusOK {
+		t.Fatalf("replay via v1 failed: %d", rrReplay.Code)
+	}
+	var replayResp struct {
+		Passed bool `json:"passed"`
+	}
+	_ = json.NewDecoder(rrReplay.Body).Decode(&replayResp)
+	if !replayResp.Passed {
+		t.Errorf("replay did not pass: %+v", replayResp)
 	}
 }
 

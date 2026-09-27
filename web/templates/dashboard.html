@@ -373,7 +373,9 @@
                         <h4 style="margin: 0;">Results &amp; Defensible Scoring</h4>
                         <p class="subtitle" style="margin: 0; font-size: 0.85rem;">Standardize judge scores, inspect Explain-This-Rank receipts, and publish official standings.</p>
                     </div>
-                    <div style="display: flex; gap: 0.5rem;">
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        <a href="/api/v1/export.csv" class="btn-sm btn-outline" download>⬇ Standings CSV</a>
+                        <a href="/api/v1/export/evaluations.csv" class="btn-sm btn-outline" download>⬇ Ballots CSV</a>
                         <a href="/results" class="btn-sm btn-outline">Open Leaderboard ↗</a>
                         <button type="button" class="btn-sm btn-primary" onclick="computeResultsDraft()">Compute Results</button>
                     </div>

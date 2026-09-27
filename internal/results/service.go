@@ -452,7 +452,7 @@ func (s *Service) ListEntriesForRun(ctx context.Context, runID string) ([]Result
 		       re.rank, re.tie_group, re.expected_reviews, re.completed_reviews, re.effective_reviews,
 		       re.fallback_count, re.explanation_json,
 		       COALESCE(s.title, 'Untitled'), COALESCE(s.summary, ''),
-		       p.track_id, COALESCE(t.name, ''), COALESCE(tm.name, 'Independent'),
+		       p.team_id, COALESCE(tm.name, 'Independent'), p.track_id, COALESCE(t.name, ''),
 		       COALESCE(s.repo_url, ''), COALESCE(s.demo_url, '')
 		FROM result_entries re
 		JOIN projects p ON re.project_id = p.id
@@ -478,7 +478,7 @@ func (s *Service) ListEntriesForRun(ctx context.Context, runID string) ([]Result
 			&e.Rank, &e.TieGroup, &e.ExpectedReviews, &e.CompletedReviews, &e.EffectiveReviews,
 			&e.FallbackCount, &e.ExplanationJSON,
 			&e.ProjectTitle, &e.ProjectSummary,
-			&e.TrackID, &e.TrackName, &e.TeamName,
+			&e.TeamID, &e.TeamName, &e.TrackID, &e.TrackName,
 			&e.RepoURL, &e.DemoURL,
 		); err != nil {
 			return nil, fmt.Errorf("failed to scan entry: %w", err)
@@ -507,7 +507,7 @@ func (s *Service) GetProjectExplanation(ctx context.Context, runID, projectID st
 		       re.rank, re.tie_group, re.expected_reviews, re.completed_reviews, re.effective_reviews,
 		       re.fallback_count, re.explanation_json,
 		       COALESCE(s.title, 'Untitled'), COALESCE(s.summary, ''),
-		       p.track_id, COALESCE(t.name, ''), COALESCE(tm.name, 'Independent'),
+		       p.team_id, COALESCE(tm.name, 'Independent'), p.track_id, COALESCE(t.name, ''),
 		       COALESCE(s.repo_url, ''), COALESCE(s.demo_url, '')
 		FROM result_entries re
 		JOIN projects p ON re.project_id = p.id
@@ -524,7 +524,7 @@ func (s *Service) GetProjectExplanation(ctx context.Context, runID, projectID st
 		&e.Rank, &e.TieGroup, &e.ExpectedReviews, &e.CompletedReviews, &e.EffectiveReviews,
 		&e.FallbackCount, &e.ExplanationJSON,
 		&e.ProjectTitle, &e.ProjectSummary,
-		&e.TrackID, &e.TrackName, &e.TeamName,
+		&e.TeamID, &e.TeamName, &e.TrackID, &e.TrackName,
 		&e.RepoURL, &e.DemoURL,
 	)
 	if err != nil {

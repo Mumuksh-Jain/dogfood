@@ -759,6 +759,35 @@ While automated acceptance suites (`run.py`) verify API endpoints, human users i
 
 ---
 
+### Checkpoint 13: Auditable CSV Export & API-First Consistency (T2 Checkpoint 5)
+
+#### Decision 13.1 — Defensible CSV Export & Stable ID Reconciliation (Invariant 19)
+* **Problem**: Naive CSV exports output arbitrary unlinked columns that cannot be reconciled with stored database records or lack stable foreign keys. The official acceptance checker requires `status == 200 and "," in first_line` when accessed by organizers, while rejecting unauthorized personas.
+* **Solution**:
+  - Implemented comprehensive, defensible CSV export in [`internal/httpapp/csv_export.go`](file:///C:/Users/Administrator/Downloads/dogfood/internal/httpapp/csv_export.go) backing `/api/export.csv`, `/api/v1/export.csv`, `/api/v1/export/evaluations.csv`, and `/api/v1/export/projects.csv`.
+  - When results exist, exports 17 stable audit columns: `rank,project_id,title,team_id,team_name,track_id,track_name,final_score,raw_score,expected_reviews,completed_reviews,effective_reviews,fallback_count,tie_group,result_run_id,input_digest,published_at`.
+  - When evaluations are requested (`?type=evaluations`), exports 11 audit columns: `assignment_id,ballot_id,project_id,project_title,judge_user_id,judge_name,rubric_version_id,save_kind,scores,comment,created_at`.
+  - When no results run has been computed yet, cleanly falls back to project submissions: `project_id,title,team_id,track,submitted_at`.
+  - Strict role isolation: Anonymous receives `401 Unauthorized`; Participants and Judges receive `403 Forbidden`; Organizers receive `200 OK` with `Content-Type: text/csv; charset=utf-8` and RFC 2616 attachment `Content-Disposition`.
+  - RFC 4180 compliance via Go's standard `encoding/csv` handles commas, double quotes, and multiline text cleanly.
+
+#### Decision 13.2 — Spreadsheet Formula Injection Defense (Failure Case F21)
+* **Problem**: In hackathon environments, malicious participants or judges can craft project titles, summaries, or evaluation comments starting with formula trigger characters (`=`, `+`, `-`, `@`, `\t`, `\r`), causing spreadsheet applications (Microsoft Excel, Google Sheets, LibreOffice Calc) to execute arbitrary formula payloads or DDE macros when opening the exported CSV.
+* **Solution**:
+  - Implemented `sanitizeCSVField(val string)` in [`internal/httpapp/csv_export.go`](file:///C:/Users/Administrator/Downloads/dogfood/internal/httpapp/csv_export.go).
+  - Checks if text cells start with formula prefixes (`=`, `+`, `-`, `@`, `\t`, `\r`).
+  - If a cell starts with a trigger and is not a legitimate plain number (verified via `strconv.ParseFloat`), it is safely prefixed with a single quote (`'`).
+  - Spreadsheet engines treat single-quoted strings as literal plain text without executing formulas or commands, completely neutralizing Failure Case F21 while preserving human readability.
+
+#### Decision 13.3 — API-First Consistency & Strict OpenAPI 3.0 Documentation (Prompt 26)
+* **Problem**: Adding API routes often leads to divergence where HTML handlers and API handlers enforce different authorization rules, deadlines, or business logic. Furthermore, "docs-only imaginary APIs" violate the hackathon prebuild freeze.
+* **Solution**:
+  - Registered unified `/api/v1/...` routes in [`internal/httpapp/server.go`](file:///C:/Users/Administrator/Downloads/dogfood/internal/httpapp/server.go) pointing to the identical underlying service handlers as legacy routes and HTML operations. Business logic and authorization guards live strictly once.
+  - Implemented `GET /api/v1/projects` and `GET /api/v1/teams` providing complete programmatic read access to project gallery items and team rosters.
+  - Authored a strictly verified [`openapi.yaml`](file:///C:/Users/Administrator/Downloads/dogfood/openapi.yaml) at the repository root describing all 32 implemented endpoints, methods, query parameters, request/response bodies, auth schemes, and status codes. Zero imaginary endpoints.
+
+---
+
 ## 4. Verification Matrix
 
 | Checkpoint | Verified Property | Exact Command / Test | Status |
@@ -792,10 +821,19 @@ While automated acceptance suites (`run.py`) verify API endpoints, human users i
 | **Human Flow F** | Strict Role-UI isolation | `TestHumanAcceptance_FlowF_RoleUI_Isolation` | **PASS** (Participant, Judge, Organizer, Admin isolation) |
 | **Human Flow G** | Rubrics & Ballot lifecycle | `TestHumanAcceptance_FlowG_RubricAndBallotLifecycle` | **PASS** (Draft -> Submit -> Lock -> Peer 403) |
 | **Human Flow H** | Results Leaderboard & Explain Rank | `TestHumanAcceptance_FlowH_ResultsAndExplainRank` | **PASS** (Compute -> Publish -> Public -> Explain -> Replay) |
+| **Human Flow I** | Auditable CSV Export & API-First | `TestHumanAcceptance_FlowI_CSVExport_And_APIFirst` | **PASS** (401/403 guards, F21 formula defense, stable IDs, v1 APIs) |
+| **CSV Export** | Formula sanitization F21 unit tests | `TestSanitizeCSVField_F21` | **PASS** (Prefix triggers `=,+,-,@,\t,\r` with `'`, preserves numbers) |
+| **CSV Export** | Auth & RFC 4180 parsing | `TestCSVExport_AuthorizationAndFormat` | **PASS** (401 anon, 403 participant/judge, 200 organizer) |
+| **CSV Export** | Evaluations breakdown | `TestCSVExport_Evaluations` | **PASS** (11 columns, RFC 4180 parsing, multiline/quotes preserved) |
+| **CSV Export** | Standings & F21 payload | `TestCSVExport_ResultsPublishedWithFormulaSanitization` | **PASS** (17 columns, sanitized payloads, stable IDs match) |
+| **API-First** | Route parity & consistency | `TestAPIFirst_Consistency` | **PASS** (`/api/v1/...` identical to `/api/...`) |
 | **Results Engine** | Statistical cohort & normalization | `TestEngine_NormalizeBallot_FallbacksAndStandardization` | **PASS** (n=1, n=2, zero var, z-score, clamp) |
 | **Results Engine** | Determinism & Tie Breaking | `TestEngine_DeterministicTiePolicyAndRanking` | **PASS** (Identical order, deterministic tie group) |
 | **Results Engine** | Replay & Tamper Detection | `TestService_ComputePublishAndReplay` | **PASS** (100% equal replay; tampered data fails) |
 | **CLI Replay** | Independent container replay probe | `docker exec dogfood-dogfood-1 /dogfood replay` | **PASS** (100% Mathematical Equality Verified) |
+| **Live CSV Export** | Anonymous blocked | `curl -s -w "%{http_code}" /api/v1/export.csv` | **PASS** (HTTP 401) |
+| **Live CSV Export** | Participant blocked | `curl -s -w "%{http_code}" -H "Cookie:..." /api/v1/export.csv` | **PASS** (HTTP 403) |
+| **Live CSV Export** | Organizer download | `curl -H "Cookie:..." /api/v1/export.csv` | **PASS** (HTTP 200, 17 columns, stable IDs) |
 | **Checker** | T1: Gallery is public | `python official/run.py .dogfood.toml` | **PASS** (HTTP 200) |
 | **Checker** | T1: Fixture projects shown | `python official/run.py .dogfood.toml` | **PASS** ("Glass Signal" present) |
 | **Checker** | T1: Closed event refuses submissions | `python official/run.py .dogfood.toml` | **PASS** (HTTP 403) |

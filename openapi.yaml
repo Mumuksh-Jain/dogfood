@@ -1,0 +1,670 @@
+openapi: 3.0.3
+info:
+  title: Dogfood 2026 Hackathon Platform API
+  description: |
+    API-first interface for the Dogfood 2026 hackathon portal.
+    Provides complete programmatic access to participant team registration, project submissions,
+    deterministic judge assignments, versioned rubrics, draft-to-final ballot lifecycle,
+    statistical score normalization, Explain-This-Rank audit receipts, independent replay verification,
+    and defensible CSV export with spreadsheet formula injection defense (Failure Case F21).
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: Local Dogfood server
+
+paths:
+  /healthz:
+    get:
+      summary: Health check
+      description: Returns service health status without requiring shell dependencies.
+      responses:
+        '200':
+          description: Service is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                  db:
+                    type: string
+                    example: connected
+
+  /api/v1/projects:
+    get:
+      summary: List submitted projects
+      description: Publicly lists all submitted projects with optional track filtering.
+      parameters:
+        - name: track
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Track ID or track name filter.
+      responses:
+        '200':
+          description: List of submitted projects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProjectView'
+    post:
+      summary: Create a project draft or submission
+      description: Creates a new project draft for the caller's team.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title, summary, track_id]
+              properties:
+                title:
+                  type: string
+                summary:
+                  type: string
+                track_id:
+                  type: string
+                repo_url:
+                  type: string
+                demo_url:
+                  type: string
+                action:
+                  type: string
+                  enum: [draft, submit]
+      responses:
+        '201':
+          description: Project created.
+        '401':
+          description: Unauthorized.
+        '403':
+          description: Submissions closed or non-participant.
+
+  /api/v1/projects/{id}:
+    get:
+      summary: Get project details
+      description: Retrieves project details. Public for submitted projects; drafts require team membership or admin.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Project view.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectView'
+        '403':
+          description: Forbidden private draft.
+        '404':
+          description: Project not found.
+
+  /api/v1/projects/{id}/edit:
+    post:
+      summary: Edit project draft
+      description: Modifies an existing project draft before the submission deadline.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                summary:
+                  type: string
+                track_id:
+                  type: string
+                repo_url:
+                  type: string
+                demo_url:
+                  type: string
+      responses:
+        '200':
+          description: Draft updated.
+        '403':
+          description: Forbidden or submissions closed.
+
+  /api/v1/projects/{id}/submit:
+    post:
+      summary: Finalize and submit project
+      description: Atomically marks a project draft as SUBMITTED before the server deadline.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Project submitted.
+        '403':
+          description: Submissions closed or deadline passed.
+
+  /api/v1/teams:
+    get:
+      summary: List registered teams
+      description: Returns an inventory of hackathon teams with membership counts and team leads.
+      responses:
+        '200':
+          description: List of teams.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TeamView'
+    post:
+      summary: Create a team
+      description: Registers a new hackathon team with the caller as the initial owner.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+      responses:
+        '201':
+          description: Team created.
+
+  /api/v1/teams/{id}/invites:
+    post:
+      summary: Create team invite
+      description: Generates a cryptographically hashed, replay-protected invitation link.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Invite token generated.
+
+  /api/v1/teams/join:
+    post:
+      summary: Accept team invite
+      description: Atomically joins a team using a valid invitation token, enforcing the 4-member capacity ceiling.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        '200':
+          description: Joined team successfully.
+        '400':
+          description: Invalid token or team at capacity.
+
+  /api/v1/tracks:
+    get:
+      summary: List competition tracks
+      description: Lists active tracks with submission counts.
+      responses:
+        '200':
+          description: List of tracks.
+    post:
+      summary: Create competition track
+      description: Organizers can configure new competition tracks.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '201':
+          description: Track created.
+
+  /api/v1/prizes:
+    get:
+      summary: List competition prizes
+      description: Lists configured awards and track associations.
+      responses:
+        '200':
+          description: List of prizes.
+    post:
+      summary: Create competition prize
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '201':
+          description: Prize created.
+
+  /api/v1/judge/scores:
+    get:
+      summary: Get judge evaluation scores
+      description: |
+        Retrieves evaluations performed by the authenticated judge.
+        Strict peer isolation enforces that judges cannot view peer evaluations (returns 403).
+        Organizers and admins may inspect evaluations for any judge using the `?judge=` query parameter.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: judge
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Target judge ID (organizers and admins only).
+      responses:
+        '200':
+          description: Judge's scored ballots.
+        '401':
+          description: Unauthorized.
+        '403':
+          description: Peer isolation enforced or non-judge role.
+
+  /api/v1/assignments/{id}/ballot:
+    get:
+      summary: Get evaluation ballot details
+      description: Returns rubric criteria, project overview, and latest draft or submitted scores for an assignment.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ballot details.
+        '403':
+          description: Forbidden - not assigned to evaluate this project.
+    post:
+      summary: Save draft ballot evaluation
+      description: Persists non-finalized scores and comments without locking the ballot.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scores:
+                  type: object
+                  additionalProperties:
+                    type: number
+                comment:
+                  type: string
+      responses:
+        '200':
+          description: Draft ballot saved.
+        '409':
+          description: Conflict - ballot is already submitted and locked.
+
+  /api/v1/assignments/{id}/ballot/submit:
+    post:
+      summary: Finalize and submit ballot
+      description: |
+        Permanently locks the ballot with version immutability.
+        Computes weighted raw score against the rubric version. Subsequent edits are hard-rejected with 409 Conflict.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scores]
+              properties:
+                scores:
+                  type: object
+                  additionalProperties:
+                    type: number
+                comment:
+                  type: string
+      responses:
+        '200':
+          description: Ballot submitted and locked.
+        '409':
+          description: Ballot already locked.
+
+  /api/v1/organizer/assignments/run:
+    post:
+      summary: Run deterministic judge assignment
+      description: Generates deterministic judge-to-project allocations matching track eligibility and capacity bounds.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Assignment run completed.
+        '403':
+          description: Organizer role required.
+
+  /api/v1/results:
+    get:
+      summary: Get active published results
+      description: Returns the public leaderboard, including project ranks, standardized scores, and input digest.
+      responses:
+        '200':
+          description: Published competition standings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  run:
+                    $ref: '#/components/schemas/ResultRun'
+                  entries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ResultEntry'
+
+  /api/v1/organizer/results/compute:
+    post:
+      summary: Compute results run
+      description: Executes z-score statistical normalization with explicit fallbacks and creates a DRAFT result run.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Draft result run created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultRun'
+        '403':
+          description: Organizer role required.
+
+  /api/v1/organizer/results/{id}/publish:
+    post:
+      summary: Publish official results run
+      description: Immutably publishes a draft result run to the public leaderboard.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Results published.
+        '403':
+          description: Organizer role required.
+
+  /api/v1/results/{run_id}/projects/{project_id}:
+    get:
+      summary: Get Explain-This-Rank receipt
+      description: Returns the complete transparent mathematical derivation receipt for a project rank.
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: project_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Explain-This-Rank audit receipt.
+
+  /api/v1/results/{run_id}/replay:
+    get:
+      summary: Verify independent replay (GET)
+      description: Re-computes scores from immutable source ballots and verifies SHA-256 digest match.
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Replay verification report.
+    post:
+      summary: Verify independent replay (POST)
+      description: Re-computes scores from immutable source ballots and verifies SHA-256 digest match.
+      parameters:
+        - name: run_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Replay verification report.
+
+  /api/v1/export.csv:
+    get:
+      summary: Export auditable CSV
+      description: |
+        Exports hackathon data in RFC 4180 compliant CSV format.
+        Applies Spreadsheet Formula Injection Defense (Failure Case F21): cells starting with
+        '=', '+', '-', '@', '\t', or '\r' are prefixed with a single quote (') to prevent arbitrary code execution in spreadsheet apps.
+        Supports query parameters `?type=results` (default standings), `?type=evaluations` (per-judge ballot audit), and `?type=projects` (project submissions).
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [results, evaluations, ballots, projects, submissions]
+            default: results
+          description: Export flavor.
+      responses:
+        '200':
+          description: RFC 4180 CSV attachment.
+          content:
+            text/csv:
+              schema:
+                type: string
+        '401':
+          description: Unauthorized.
+        '403':
+          description: Forbidden - Organizer role required.
+
+  /api/v1/export/evaluations.csv:
+    get:
+      summary: Export ballot evaluations CSV
+      description: Dedicated route to export complete per-judge evaluation audit data in CSV format.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Evaluations CSV attachment.
+          content:
+            text/csv:
+              schema:
+                type: string
+        '403':
+          description: Forbidden - Organizer role required.
+
+  /api/v1/export/projects.csv:
+    get:
+      summary: Export project submissions CSV
+      description: Dedicated route to export project submissions in CSV format.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Projects CSV attachment.
+          content:
+            text/csv:
+              schema:
+                type: string
+        '403':
+          description: Forbidden - Organizer role required.
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Seeded token or active session bearer token.
+    CookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Session token cookie.
+
+  schemas:
+    ProjectView:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+        team_id:
+          type: string
+        track_id:
+          type: string
+        track_name:
+          type: string
+        repo_url:
+          type: string
+        demo_url:
+          type: string
+        submitted_at:
+          type: string
+        state:
+          type: string
+          enum: [DRAFT, SUBMITTED, SUPERSEDED, WITHDRAWN]
+        version_no:
+          type: integer
+
+    TeamView:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        created_at:
+          type: string
+        lead_name:
+          type: string
+        member_count:
+          type: integer
+
+    ResultRun:
+      type: object
+      properties:
+        id:
+          type: string
+        event_id:
+          type: string
+        algorithm_key:
+          type: string
+        algorithm_version:
+          type: string
+        status:
+          type: string
+          enum: [DRAFT, PUBLISHED, RETIRED]
+        input_digest:
+          type: string
+        created_at:
+          type: string
+        published_at:
+          type: string
+
+    ResultEntry:
+      type: object
+      properties:
+        result_run_id:
+          type: string
+        project_id:
+          type: string
+        project_title:
+          type: string
+        team_id:
+          type: string
+        team_name:
+          type: string
+        track_id:
+          type: string
+        track_name:
+          type: string
+        rank:
+          type: integer
+        tie_group:
+          type: integer
+        raw_score:
+          type: number
+        normalized_score:
+          type: number
+        final_score:
+          type: number
+        expected_reviews:
+          type: integer
+        completed_reviews:
+          type: integer
+        effective_reviews:
+          type: integer
+        fallback_count:
+          type: integer

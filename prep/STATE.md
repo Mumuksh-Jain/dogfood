@@ -1,24 +1,31 @@
 # STATE
 
 ## Current phase
-T2 JUDGING: CHECKPOINT 4 (RESULTS ENGINE, DEFENSIBLE SCORE AGGREGATION, LEADERBOARD, & EXPLAIN-THIS-RANK REPLAY) COMPLETE
+T2 JUDGING: CHECKPOINT 5 (AUDITABLE CSV EXPORT & API-FIRST CONSISTENCY) COMPLETE
 
 ## Last checkpoint passed
-T2 Checkpoint 4: Complete Results Engine, Leaderboard, and "Explain This Rank" Auditability / Replay implemented and verified:
-- Migration `0003_results_replay.sql` introducing `result_runs` and `result_entries` tables, with comprehensive migration tests in `internal/migrations/migration_0003_test.go`.
-- Package `internal/results` implementing defensible cross-judge normalization (z-score standardization with explicit low-n and zero-variance fallbacks), deterministic tie-breaking, canonical JSON input manifests, and SHA-256 digest provenance.
-- Public & Organizer HTTP endpoints:
-  - `GET /results`: Leaderboard standings with podium, track filtering, and review count metrics.
-  - `GET /results/{run_id}/projects/{project_id}`: Flagship "Explain This Rank" transparent receipt displaying rubric criteria scores, judge cohort statistics, formula breakdown, approved fairness statement, and tie-breaking rationale.
-  - `POST /api/organizer/results/compute`: Organizer computation of draft results.
-  - `POST /api/organizer/results/{id}/publish`: Organizer publication of immutable results.
-  - `GET /api/results`: Public API for active published results.
-  - `GET /api/results/{run_id}/projects/{project_id}`: API receipt payload.
-  - `GET /api/results/{run_id}/replay`: Independent mathematical recalculation and digest verification.
-- Independent CLI command `dogfood replay <run_id> [project_id]` in `cmd/dogfood/main.go` verifying 100% mathematical equality and digest matches.
-- Automated tests: `internal/results/engine_test.go`, `internal/results/service_test.go`, `internal/httpapp/human_acceptance_test.go` (Flow H), plus controlled tampering test proving replay fails when data is corrupted.
-- Official acceptance runner `python official/run.py .dogfood.toml`: 7/7 PASS (`claimed T1 T2, verified T1 T2`).
+T2 Checkpoint 5: Auditable CSV Export & API-First Consistency implemented and verified:
+- Defensible CSV export in `internal/httpapp/csv_export.go` supporting:
+  - Default standings export (`/api/export.csv`, `/api/v1/export.csv`, `/api/v1/export/results.csv`): 17 stable reconciliation columns (`rank,project_id,title,team_id,team_name,track_id,track_name,final_score,raw_score,expected_reviews,completed_reviews,effective_reviews,fallback_count,tie_group,result_run_id,input_digest,published_at`).
+  - Evaluations export (`/api/export/evaluations.csv`, `/api/v1/export/evaluations.csv`, `?type=evaluations`): 11 audit columns (`assignment_id,ballot_id,project_id,project_title,judge_user_id,judge_name,rubric_version_id,save_kind,scores,comment,created_at`).
+  - Projects export (`/api/export/projects.csv`, `/api/v1/export/projects.csv`, `?type=projects`): project submissions with stable identifiers.
+  - Clean project fallback if results run has not been computed yet, ensuring unconditional official acceptance test compatibility.
+- Spreadsheet Formula Injection Defense (Failure Case F21):
+  - `sanitizeCSVField` prefixes cells starting with formula triggers (`=`, `+`, `-`, `@`, `\t`, `\r`) with single quote (`'`), while preserving valid numbers.
+- Strict Role Isolation:
+  - Anonymous callers receive `401 Unauthorized`.
+  - Non-admin personas (participants, judges) receive `403 Forbidden`.
+  - Organizers and admins receive `200 OK` with `Content-Type: text/csv; charset=utf-8` and RFC 2616 `Content-Disposition: attachment`.
+- API-First Consistency (Prompt 26):
+  - Unified `/api/v1/...` routes in `internal/httpapp/server.go` sharing exact same service handlers and authorization checks as HTML routes.
+  - Implemented `GET /api/v1/projects` and `GET /api/v1/teams`.
+  - Authored valid, comprehensive `openapi.yaml` at repository root documenting all 32 implemented endpoints with zero docs-only imaginary routes.
+- Automated Tests:
+  - `internal/httpapp/csv_export_test.go`: `TestSanitizeCSVField_F21`, `TestCSVExport_AuthorizationAndFormat`, `TestCSVExport_Evaluations`, `TestCSVExport_ResultsPublishedWithFormulaSanitization`, `TestAPIFirst_Consistency`.
+  - `internal/httpapp/human_acceptance_test.go`: `TestHumanAcceptance_FlowI_CSVExport_And_APIFirst` (Flow I).
+  - Full repo test suite `go test -count=1 ./...` PASS.
 - Container runtime verified: `docker compose build` and live HTTP probes passing.
+- Official acceptance runner `python official/run.py .dogfood.toml`: 7/7 PASS (`claimed T1 T2, verified T1 T2`).
 
 ## Current blocker
 none
@@ -34,7 +41,7 @@ T2  csv export works .................. PASS
 claimed T1 T2, verified T1 T2
 
 ## Next action
-Review T2 Checkpoint 4 report. Human controls Git. Ready for final release documentation, README/JUDGING.md updates, or tag if requested.
+Review T2 Checkpoint 5 report. Human controls Git. Ready for final pre-freeze reviews, documentation polish, or tagging if requested.
 
 ## Known deltas since H0
 None.
@@ -59,6 +66,7 @@ None.
 - T2 rubric & ballot lifecycle: complete and verified (internal/judging, templates, HTTP API)
 - T2 results & normalization engine: complete and verified (Migration 0003, internal/results)
 - Replay differentiator: complete and verified (Explain This Rank UI, API, & CLI)
+- Auditable CSV Export & API-First consistency: complete and verified (internal/httpapp, openapi.yaml, Flow I)
 - Final acceptance evidence: verified (7/7 PASS)
 
 ## Rule
