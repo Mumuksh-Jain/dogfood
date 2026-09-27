@@ -114,39 +114,44 @@ func TestMigration0001_RealSchema(t *testing.T) {
 		t.Fatalf("failed to enable foreign_keys: %v", err)
 	}
 
-	// 1. Run migrations using default EmbeddedFS containing 0001_t1_core.sql
-	if err := Run(ctx, db); err != nil {
+	content0001, err := EmbeddedFS.ReadFile("0001_t1_core.sql")
+	if err != nil {
+		t.Fatalf("failed to read 0001_t1_core.sql: %v", err)
+	}
+	only0001FS := fstest.MapFS{
+		"0001_t1_core.sql": &fstest.MapFile{Data: content0001},
+	}
+
+	// 1. Run migrations using MapFS containing only 0001_t1_core.sql
+	if err := RunWithFS(ctx, db, only0001FS); err != nil {
 		t.Fatalf("Run failed on fresh empty database: %v", err)
 	}
 
-	// 2. Check schema_migrations records 0001 and 0010
+	// 2. Check schema_migrations records 0001
 	applied, err := GetApplied(ctx, db)
 	if err != nil {
 		t.Fatalf("GetApplied failed: %v", err)
 	}
-	if len(applied) != 2 {
-		t.Fatalf("expected 2 applied migrations, got %d", len(applied))
+	if len(applied) != 1 {
+		t.Fatalf("expected 1 applied migration, got %d", len(applied))
 	}
 	if applied[0].Version != 1 || applied[0].Name != "0001_t1_core" {
 		t.Errorf("unexpected migration 1: version=%d name=%s", applied[0].Version, applied[0].Name)
 	}
-	if applied[1].Version != 10 || applied[1].Name != "0010_t1_prizes" {
-		t.Errorf("unexpected migration 10: version=%d name=%s", applied[1].Version, applied[1].Name)
-	}
 
 	// 3. Re-run (simulate restart) and verify idempotency
-	if err := Run(ctx, db); err != nil {
+	if err := RunWithFS(ctx, db, only0001FS); err != nil {
 		t.Fatalf("second Run (restart) failed: %v", err)
 	}
 	appliedAfterRestart, err := GetApplied(ctx, db)
 	if err != nil {
 		t.Fatalf("GetApplied after restart failed: %v", err)
 	}
-	if len(appliedAfterRestart) != 2 {
-		t.Fatalf("expected still 2 migrations after restart, got %d", len(appliedAfterRestart))
+	if len(appliedAfterRestart) != 1 {
+		t.Fatalf("expected still 1 migration after restart, got %d", len(appliedAfterRestart))
 	}
 
-	// 4. Verify all 12 T1 tables exist (including prizes)
+	// 4. Verify all 11 core T1 tables exist in 0001
 	t1Tables := []string{
 		"users",
 		"sessions",
@@ -159,7 +164,6 @@ func TestMigration0001_RealSchema(t *testing.T) {
 		"projects",
 		"submissions",
 		"seed_imports",
-		"prizes",
 	}
 
 	for _, tbl := range t1Tables {

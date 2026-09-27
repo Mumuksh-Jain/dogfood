@@ -1,10 +1,10 @@
 # STATE
 
 ## Current phase
-T1 PRODUCT: COMPLETE / FROZEN
+T2 JUDGING: CHECKPOINT 1 (SCHEMA ONLY) COMPLETE
 
 ## Last checkpoint passed
-T1 Human Product Closure: Authentication architecture separation (protected acceptance tokens vs dynamic human sessions), 1-click Demo Personas, Complete Browser Team Lifecycle with dedicated confirmation page and capacity guards, Participant Project Workspace, Organizer Management Workspace, Judge Role Surface, and automated human acceptance test suite (Flows A–E).
+T2 Checkpoint 1: Forward-only 0002 judging migration created with exactly six frozen tables (judge_profiles, judge_track_eligibility, assignment_runs, assignments, rubric_versions, ballot_versions). Comprehensive test suite verifying fresh database application, schema metadata, restart idempotency, checksum hard-failure, foreign key enforcement, schema scope isolation, append-only ballot versioning, and assignment integrity.
 
 ## Current blocker
 none
@@ -20,7 +20,7 @@ T2  csv export works .................. PASS
 claimed T1 T2, verified T1 T2
 
 ## Next action
-Human reviews and commits T1 Product Closure checkpoint. Tier 1 is fully frozen and demonstrable. Ready for Tier 2 Judging Schema (Migration 0020).
+Review T2 Checkpoint 1 judging schema. Ready for T2 Assignment Engine & algorithm implementation.
 
 ## Known deltas since H0
 None.
@@ -40,6 +40,7 @@ None.
 - Containerized runtime: VERIFIED
 - Self-contained runtime assets: VERIFIED
 - Clean/reviewer-environment offline release proof: PENDING dedicated release checkpoint
+- T2 judging schema: complete and verified (Migration 0002)
 - T2 judging engine: not started
 - Replay differentiator: not started
 - Final acceptance evidence: verified (7/7 PASS)
