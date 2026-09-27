@@ -1125,3 +1125,195 @@ code {
     grid-template-columns: 1fr;
   }
 }
+
+/* ============ Results & Explain-This-Rank Audit System ============ */
+.podium-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1.25rem;
+  margin-bottom: 2rem;
+}
+
+.podium-card {
+  background: #fff;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.5rem;
+  position: relative;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.podium-card.rank-1 {
+  border-color: #d4af37;
+  background: linear-gradient(180deg, #fffdf5 0%, #fff 100%);
+  box-shadow: 0 6px 20px rgba(212, 175, 55, 0.15);
+}
+
+.podium-card.rank-2 {
+  border-color: #a8a9ad;
+  background: linear-gradient(180deg, #f8f9fa 0%, #fff 100%);
+}
+
+.podium-card.rank-3 {
+  border-color: #cd7f32;
+  background: linear-gradient(180deg, #fbf7f4 0%, #fff 100%);
+}
+
+.podium-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.25rem 0.65rem;
+  border-radius: var(--radius-pill);
+  font-weight: 700;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.75rem;
+}
+
+.podium-badge.gold {
+  background: #fdf5d3;
+  color: #8c731f;
+  border: 1px solid #e6cb68;
+}
+
+.podium-badge.silver {
+  background: #edeef0;
+  color: #5c5d61;
+  border: 1px solid #c2c3c7;
+}
+
+.podium-badge.bronze {
+  background: #faeade;
+  color: #945318;
+  border: 1px solid #df9c63;
+}
+
+.leaderboard-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: #fff;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.leaderboard-table th {
+  background: var(--bg-warm);
+  padding: 0.85rem 1rem;
+  text-align: left;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1.5px solid var(--border);
+}
+
+.leaderboard-table td {
+  padding: 1rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  font-size: 0.95rem;
+}
+
+.leaderboard-table tr:last-child td {
+  border-bottom: none;
+}
+
+.leaderboard-table tr:hover td {
+  background: #faf8f5;
+}
+
+.rank-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 50%;
+  font-weight: 800;
+  font-size: 0.95rem;
+  background: var(--bg-warm);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.rank-pill.top-1 {
+  background: #fdf5d3;
+  color: #8c731f;
+  border-color: #d4af37;
+}
+
+.rank-pill.top-2 {
+  background: #edeef0;
+  color: #5c5d61;
+  border-color: #a8a9ad;
+}
+
+.rank-pill.top-3 {
+  background: #faeade;
+  color: #945318;
+  border-color: #cd7f32;
+}
+
+.fallback-pill {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fallback-pill.normalized {
+  background: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success-border);
+}
+
+.fallback-pill.fallback {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning-border);
+}
+
+.receipt-card {
+  background: #fff;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.75rem;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.receipt-step {
+  border-left: 3px solid var(--accent);
+  padding-left: 1.25rem;
+  margin-bottom: 1.75rem;
+}
+
+.digest-box {
+  background: var(--bg-warm);
+  border: 1px dashed var(--border-input);
+  border-radius: var(--radius-sm);
+  padding: 0.75rem 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  word-break: break-all;
+  color: var(--text-secondary);
+}
+
+.audit-callout {
+  background: var(--bg-card);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}

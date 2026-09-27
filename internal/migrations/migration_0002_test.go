@@ -3,6 +3,7 @@ package migrations
 import (
 	"context"
 	"database/sql"
+	"io/fs"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -391,7 +392,7 @@ func TestMigration0002_ForeignKeysEnforced(t *testing.T) {
 	}
 }
 
-// 6. Schema scope: verify the six T2 tables exist, verify no accidental T3/T4 tables were introduced.
+// 6. Schema scope: verify the six T2 tables exist, verify no accidental T3/T4 tables were introduced in 0002.
 func TestMigration0002_SchemaScope(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -400,7 +401,25 @@ func TestMigration0002_SchemaScope(t *testing.T) {
 		t.Fatalf("failed to enable foreign_keys: %v", err)
 	}
 
-	if err := Run(ctx, db); err != nil {
+	c0001, err := fs.ReadFile(ActiveFS, "0001_t1_core.sql")
+	if err != nil {
+		t.Fatalf("failed to read 0001_t1_core.sql: %v", err)
+	}
+	c0002, err := fs.ReadFile(ActiveFS, "0002_t2_judging.sql")
+	if err != nil {
+		t.Fatalf("failed to read 0002_t2_judging.sql: %v", err)
+	}
+	c0010, err := fs.ReadFile(ActiveFS, "0010_t1_prizes.sql")
+	if err != nil {
+		t.Fatalf("failed to read 0010_t1_prizes.sql: %v", err)
+	}
+	fsUpTo0002 := fstest.MapFS{
+		"0001_t1_core.sql":    &fstest.MapFile{Data: c0001},
+		"0002_t2_judging.sql": &fstest.MapFile{Data: c0002},
+		"0010_t1_prizes.sql":  &fstest.MapFile{Data: c0010},
+	}
+
+	if err := RunWithFS(ctx, db, fsUpTo0002); err != nil {
 		t.Fatalf("Run failed: %v", err)
 	}
 

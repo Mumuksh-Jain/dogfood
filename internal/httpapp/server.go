@@ -21,6 +21,7 @@ import (
 	"dogfood/internal/assignment"
 	"dogfood/internal/auth"
 	"dogfood/internal/judging"
+	"dogfood/internal/results"
 	"dogfood/web"
 )
 
@@ -38,6 +39,7 @@ type Server struct {
 	tmpl              *template.Template
 	judgingService    *judging.Service
 	assignmentService *assignment.Service
+	resultsService    *results.Service
 }
 
 // ProjectView holds project data for UI and API representations.
@@ -212,6 +214,31 @@ type ProjectDetailData struct {
 	User            *auth.Identity
 }
 
+// ResultsData is passed to results.html template.
+type ResultsData struct {
+	EventName   string
+	EventID     string
+	Run         *results.ResultRun
+	Entries     []results.ResultEntry
+	Tracks      []TrackCount
+	User        *auth.Identity
+	IsOrganizer bool
+	Message     string
+	Error       string
+}
+
+// ExplainRankData is passed to explain_rank.html template.
+type ExplainRankData struct {
+	EventName   string
+	EventID     string
+	Run         *results.ResultRun
+	Entry       *results.ResultEntry
+	Explanation *results.ExplanationPayload
+	User        *auth.Identity
+	Message     string
+	Error       string
+}
+
 func getDemoAccounts() []DemoAccount {
 	return []DemoAccount{
 		{
@@ -265,6 +292,9 @@ func NewServer(cfg Config) (*Server, error) {
 
 	tmpl, err := template.New("").Funcs(template.FuncMap{
 		"lower": strings.ToLower,
+		"add": func(a, b int) int {
+			return a + b
+		},
 		"scoreFor": func(ballot *judging.BallotVersion, critID string) string {
 			if ballot == nil || ballot.CriteriaScores == nil {
 				return ""
@@ -295,6 +325,7 @@ func NewServer(cfg Config) (*Server, error) {
 		tmpl:              tmpl,
 		judgingService:    judging.NewService(cfg.DB),
 		assignmentService: assignment.NewService(cfg.DB),
+		resultsService:    results.NewService(cfg.DB),
 	}
 
 	mux := http.NewServeMux()
@@ -358,6 +389,17 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /api/events/{event_id}/rubrics", s.handleCreateRubricDraftAPI)
 	mux.HandleFunc("POST /api/rubrics/{rubric_version_id}/publish", s.handlePublishRubricAPI)
 	mux.HandleFunc("POST /api/organizer/assignments/run", s.handleRunAssignments)
+ 
+	// 12. Results, Leaderboard & Explain-This-Rank Auditability
+	mux.HandleFunc("GET /results", s.handleResultsPage)
+	mux.HandleFunc("GET /results/{run_id}/projects/{project_id}", s.handleExplainRankPage)
+	mux.HandleFunc("POST /api/organizer/results/compute", s.handleComputeResults)
+	mux.HandleFunc("POST /api/organizer/results/{id}/publish", s.handlePublishResults)
+	mux.HandleFunc("GET /api/results", s.handleGetActiveResultsAPI)
+	mux.HandleFunc("GET /api/results/{run_id}/projects/{project_id}", s.handleGetExplanationAPI)
+	mux.HandleFunc("GET /api/results/{run_id}/replay", s.handleReplayAPI)
+	mux.HandleFunc("POST /api/results/{run_id}/replay", s.handleReplayAPI)
+	mux.HandleFunc("GET /api/results/{run_id}/replay/{project_id}", s.handleReplayProjectAPI)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	s.httpServer = &http.Server{
@@ -2797,3 +2839,270 @@ func (s *Server) handleCSVExport(w http.ResponseWriter, r *http.Request) {
 	}
 	writer.Flush()
 }
+
+// --- Results, Leaderboard, & Explain-This-Rank Handlers ---
+
+func (s *Server) handleResultsPage(w http.ResponseWriter, r *http.Request) {
+	var eventID, eventName string
+	if s.db != nil {
+		_ = s.db.QueryRowContext(r.Context(), "SELECT id, name FROM events ORDER BY created_at ASC LIMIT 1;").Scan(&eventID, &eventName)
+	}
+
+	user := s.getCurrentUser(r)
+	isOrganizer := canAdminister(user)
+
+	var run *results.ResultRun
+	var entries []results.ResultEntry
+
+	if s.resultsService != nil && eventID != "" {
+		activeRun, activeEntries, err := s.resultsService.GetActiveResults(r.Context(), eventID)
+		if err == nil && activeRun != nil {
+			run = activeRun
+			entries = activeEntries
+		} else if isOrganizer {
+			// If organizer, show latest draft run for preview
+			var draftID string
+			_ = s.db.QueryRowContext(r.Context(), `
+				SELECT id FROM result_runs WHERE event_id = ? AND status = 'DRAFT' ORDER BY created_at DESC LIMIT 1;
+			`, eventID).Scan(&draftID)
+			if draftID != "" {
+				draftRun, err := s.resultsService.GetResultRunByID(r.Context(), draftID)
+				if err == nil && draftRun != nil {
+					run = draftRun
+					entries, _ = s.resultsService.ListEntriesForRun(r.Context(), draftID)
+				}
+			}
+		}
+	}
+
+	var tracks []TrackCount
+	if s.db != nil && eventID != "" {
+		trackRows, err := s.db.QueryContext(r.Context(), `
+			SELECT t.id, t.name, COUNT(p.id)
+			FROM tracks t
+			LEFT JOIN projects p ON t.id = p.track_id
+			WHERE t.event_id = ?
+			GROUP BY t.id, t.name
+			ORDER BY t.name ASC;
+		`, eventID)
+		if err == nil {
+			defer trackRows.Close()
+			for trackRows.Next() {
+				var tc TrackCount
+				if err := trackRows.Scan(&tc.ID, &tc.Name, &tc.Count); err == nil {
+					tracks = append(tracks, tc)
+				}
+			}
+		}
+	}
+
+	data := ResultsData{
+		EventName:   eventName,
+		EventID:     eventID,
+		Run:         run,
+		Entries:     entries,
+		Tracks:      tracks,
+		User:        user,
+		IsOrganizer: isOrganizer,
+		Message:     r.URL.Query().Get("msg"),
+		Error:       r.URL.Query().Get("error"),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if err := s.tmpl.ExecuteTemplate(w, "results.html", data); err != nil {
+		http.Error(w, "internal server error: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleExplainRankPage(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("run_id")
+	projectID := r.PathValue("project_id")
+	if runID == "" || projectID == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	var eventName string
+	if s.db != nil {
+		_ = s.db.QueryRowContext(r.Context(), "SELECT name FROM events ORDER BY created_at ASC LIMIT 1;").Scan(&eventName)
+	}
+
+	user := s.getCurrentUser(r)
+
+	run, entry, exp, err := s.resultsService.GetProjectExplanation(r.Context(), runID, projectID)
+	if err != nil {
+		if errors.Is(err, results.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "failed to get explanation: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := ExplainRankData{
+		EventName:   eventName,
+		EventID:     run.EventID,
+		Run:         run,
+		Entry:       entry,
+		Explanation: exp,
+		User:        user,
+		Message:     r.URL.Query().Get("msg"),
+		Error:       r.URL.Query().Get("error"),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if err := s.tmpl.ExecuteTemplate(w, "explain_rank.html", data); err != nil {
+		http.Error(w, "internal server error: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleComputeResults(w http.ResponseWriter, r *http.Request) {
+	id, err := auth.Authenticate(r.Context(), s.db, r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+	if !canAdminister(id) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: organizer role required"})
+		return
+	}
+
+	var eventID string
+	_ = s.db.QueryRowContext(r.Context(), "SELECT id FROM events ORDER BY created_at ASC LIMIT 1;").Scan(&eventID)
+
+	run, err := s.resultsService.ComputeResults(r.Context(), eventID, id.UserID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(run)
+}
+
+func (s *Server) handlePublishResults(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("id")
+	if runID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "run id required"})
+		return
+	}
+
+	id, err := auth.Authenticate(r.Context(), s.db, r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+	if !canAdminister(id) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: organizer role required"})
+		return
+	}
+
+	run, err := s.resultsService.PublishResults(r.Context(), runID, id.UserID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(run)
+}
+
+func (s *Server) handleGetActiveResultsAPI(w http.ResponseWriter, r *http.Request) {
+	var eventID string
+	_ = s.db.QueryRowContext(r.Context(), "SELECT id FROM events ORDER BY created_at ASC LIMIT 1;").Scan(&eventID)
+
+	run, entries, err := s.resultsService.GetActiveResults(r.Context(), eventID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"run":     run,
+		"entries": entries,
+	})
+}
+
+func (s *Server) handleGetExplanationAPI(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("run_id")
+	projectID := r.PathValue("project_id")
+
+	_, _, exp, err := s.resultsService.GetProjectExplanation(r.Context(), runID, projectID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		if errors.Is(err, results.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "explanation not found"})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(exp)
+}
+
+func (s *Server) handleReplayAPI(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("run_id")
+	if runID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "run_id required"})
+		return
+	}
+
+	report, err := s.resultsService.ReplayRun(r.Context(), runID, "")
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(report)
+}
+
+func (s *Server) handleReplayProjectAPI(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("run_id")
+	projectID := r.PathValue("project_id")
+
+	report, err := s.resultsService.ReplayRun(r.Context(), runID, projectID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(report)
+}
+

@@ -20,6 +20,7 @@
             </div>
             <nav class="nav-links">
                 <a href="/projects" class="nav-link">Gallery</a>
+                <a href="/results" class="nav-link">Leaderboard</a>
                 <a href="/dashboard" class="nav-link active">Dashboard</a>
                 {{if or .IsOrganizer .IsAdmin}}
                 <a href="#event" class="nav-link">Event</a>
@@ -359,6 +360,22 @@
                     <div class="meta-cell">
                         <span class="label">Matching Strategy</span>
                         <span class="value">Track-eligible, Capacity-bounded</span>
+                    </div>
+                </div>
+            </div>
+
+            <hr class="divider">
+
+            <!-- Results & Defensible Scoring -->
+            <div id="results-management" style="margin-top: 1rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
+                    <div>
+                        <h4 style="margin: 0;">Results &amp; Defensible Scoring</h4>
+                        <p class="subtitle" style="margin: 0; font-size: 0.85rem;">Standardize judge scores, inspect Explain-This-Rank receipts, and publish official standings.</p>
+                    </div>
+                    <div style="display: flex; gap: 0.5rem;">
+                        <a href="/results" class="btn-sm btn-outline">Open Leaderboard ↗</a>
+                        <button type="button" class="btn-sm btn-primary" onclick="computeResultsDraft()">Compute Results</button>
                     </div>
                 </div>
             </div>
@@ -743,6 +760,20 @@
                     alert('Invite link copied!');
                 });
             }
+        }
+
+        function computeResultsDraft() {
+            if (!confirm('Compute competition results from all submitted judge ballots?')) return;
+            fetch('/api/organizer/results/compute', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.id) {
+                        window.location.href = '/results';
+                    } else {
+                        alert('Compute error: ' + (data.error || 'Failed'));
+                    }
+                })
+                .catch(err => alert('Request failed: ' + err.message));
         }
     </script>
 </body>

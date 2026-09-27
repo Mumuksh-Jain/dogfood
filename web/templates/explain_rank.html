@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Explanation.ProjectTitle}} — Explain This Rank</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="container header-inner">
+            <div class="brand-group">
+                <a href="/projects" class="brand-title">Dogfood 2026</a>
+                <span class="event-name">{{if .EventName}}{{.EventName}}{{else}}Hackathon{{end}}</span>
+                <span class="status-badge status-open">● Audit Receipt</span>
+            </div>
+            <nav class="nav-links">
+                <a href="/projects" class="nav-link">Gallery</a>
+                <a href="/results" class="nav-link active">Leaderboard</a>
+                {{if .User}}
+                <a href="/dashboard" class="nav-link">Dashboard ({{.User.DisplayName}})</a>
+                <a href="/logout" class="nav-link nav-btn-outline">Sign Out</a>
+                {{else}}
+                <a href="/login" class="nav-link nav-btn">Sign In</a>
+                {{end}}
+            </nav>
+        </div>
+    </header>
+
+    <main class="container" style="padding-top: 2rem; padding-bottom: 4rem; max-width: 960px;">
+        <div class="back-nav" style="margin-bottom: 1.5rem;">
+            <a href="/results" style="font-weight: 600; font-size: 0.9rem;">← Back to Leaderboard Standings</a>
+        </div>
+
+        <!-- Header Card: Project & Rank Overview -->
+        <div class="card" style="padding: 2rem; margin-bottom: 2rem; border-top: 4px solid var(--accent);">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;">
+                <div>
+                    <div style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem;">
+                        <span class="tag">{{.Explanation.TrackName}}</span>
+                        <span class="status-badge {{if eq .Explanation.RunStatus "PUBLISHED"}}status-open{{else}}status-closed{{end}}">
+                            {{.Explanation.RunStatus}}
+                        </span>
+                        {{if eq .Explanation.FallbackCount 0}}
+                        <span class="fallback-pill normalized">Normalized</span>
+                        {{else}}
+                        <span class="fallback-pill fallback">Fallback Used ({{.Explanation.FallbackCount}})</span>
+                        {{end}}
+                    </div>
+                    <h1 style="font-size: 2.2rem; font-weight: 800; color: var(--text); margin-bottom: 0.35rem;">
+                        {{.Explanation.ProjectTitle}}
+                    </h1>
+                    <p style="color: var(--text-muted); font-size: 1rem;">
+                        Submitted by team <strong>{{.Explanation.TeamName}}</strong> • Project ID: <code style="font-family: var(--font-mono);">{{.Explanation.ProjectID}}</code>
+                    </p>
+                </div>
+
+                <div style="display: flex; gap: 2rem; align-items: center; background: var(--bg-warm); padding: 1rem 1.5rem; border-radius: var(--radius-md); border: 1px solid var(--border);">
+                    <div style="text-align: center;">
+                        <div style="font-size: 0.75rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted);">Rank Awarded</div>
+                        <div style="font-size: 2.4rem; font-weight: 900; color: var(--accent); line-height: 1.1;">#{{.Explanation.TieBreak.Rank}}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-secondary);">Tie Group: {{.Explanation.TieBreak.TieGroup}}</div>
+                    </div>
+                    <div style="border-left: 1px solid var(--border-input); height: 50px;"></div>
+                    <div style="text-align: center;">
+                        <div style="font-size: 0.75rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted);">Final Score</div>
+                        <div style="font-size: 2.4rem; font-weight: 900; color: var(--text); line-height: 1.1;">{{printf "%.2f" .Explanation.FormulaBreakdown.FinalScore}}</div>
+                        <div style="font-size: 0.75rem; color: var(--text-secondary);">out of 5.00</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Verification Action Bar -->
+            <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border); padding-top: 1.25rem; margin-top: 1rem; flex-wrap: wrap; gap: 1rem;">
+                <div style="font-size: 0.85rem; color: var(--text-secondary);">
+                    Audit Receipt generated for Result Run: <code style="font-family: var(--font-mono); font-weight: 700;">{{.Explanation.RunID}}</code>
+                </div>
+                <button type="button" class="btn btn-secondary" onclick="verifyProjectReplay('{{.Explanation.RunID}}', '{{.Explanation.ProjectID}}')" id="proj-replay-btn">
+                    Verify Independent Replay
+                </button>
+            </div>
+            <div id="proj-replay-banner" style="display: none; margin-top: 1rem;"></div>
+        </div>
+
+        <!-- Section 1: Review Counts & Quorum Invariants -->
+        <div class="receipt-card">
+            <h2 style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.75rem; color: var(--text);">1. Review Quorum & Allocation</h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1rem;">
+                <div style="background: var(--bg-warm); padding: 0.85rem 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border);">
+                    <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Expected Reviews</div>
+                    <div style="font-size: 1.5rem; font-weight: 800; color: var(--text);">{{.Explanation.ExpectedReviews}}</div>
+                </div>
+                <div style="background: var(--bg-warm); padding: 0.85rem 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border);">
+                    <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Completed Ballots</div>
+                    <div style="font-size: 1.5rem; font-weight: 800; color: var(--text);">{{.Explanation.CompletedReviews}}</div>
+                </div>
+                <div style="background: var(--bg-warm); padding: 0.85rem 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border);">
+                    <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Effective Reviews</div>
+                    <div style="font-size: 1.5rem; font-weight: 800; color: var(--text);">{{.Explanation.EffectiveReviews}}</div>
+                </div>
+                <div style="background: var(--bg-warm); padding: 0.85rem 1rem; border-radius: var(--radius-sm); border: 1px solid var(--border);">
+                    <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700;">Fallbacks Applied</div>
+                    <div style="font-size: 1.5rem; font-weight: 800; color: {{if gt .Explanation.FallbackCount 0}}var(--warning){{else}}var(--success){{end}};">
+                        {{.Explanation.FallbackCount}}
+                    </div>
+                </div>
+            </div>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin: 0;">
+                Rubric Version: <code>{{.Explanation.RubricVersionID}}</code> • All submitted evaluations are strictly immutable and verified against assignment records.
+            </p>
+        </div>
+
+        <!-- Section 2: Submitted Ballots & Statistical Normalization Breakdown -->
+        <div class="receipt-card">
+            <h2 style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.75rem; color: var(--text);">2. Evaluator Ballots & Statistical Standardization</h2>
+            <p style="font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 1.25rem;">
+                Each judge's raw score is evaluated in the context of their complete evaluation cohort to neutralize harsh vs lenient grading curves.
+            </p>
+
+            {{range $i, $b := .Explanation.BallotAudits}}
+            <div style="background: var(--bg-warm); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 1.25rem; margin-bottom: 1.25rem;">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 0.75rem;">
+                    <div>
+                        <span style="font-weight: 700; font-size: 1rem; color: var(--text);">Ballot #{{add $i 1}}: {{$b.JudgeName}}</span>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">
+                            Judge ID: <code>{{$b.JudgeUserID}}</code> • Ballot Version: <code>{{$b.BallotVersionID}}</code> (v{{$b.BallotVersionNo}}) • Submitted: {{$b.SubmittedAt}}
+                        </div>
+                    </div>
+                    <div style="text-align: right;">
+                        {{if eq $b.FallbackCode "NONE"}}
+                        <span class="fallback-pill normalized">Z-Score Standardized</span>
+                        {{else}}
+                        <span class="fallback-pill fallback">{{$b.FallbackCode}}</span>
+                        {{end}}
+                    </div>
+                </div>
+
+                <!-- Criteria Scores Map -->
+                {{if $b.CriteriaScores}}
+                <div style="margin-bottom: 0.85rem;">
+                    <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 0.35rem;">Criteria Breakdown</div>
+                    <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                        {{range $crit, $val := $b.CriteriaScores}}
+                        <span style="background: #fff; border: 1px solid var(--border-input); border-radius: var(--radius-xs); padding: 0.2rem 0.6rem; font-size: 0.82rem;">
+                            <strong>{{$crit}}:</strong> {{printf "%.1f" $val}}
+                        </span>
+                        {{end}}
+                    </div>
+                </div>
+                {{end}}
+
+                <!-- Cohort Math Stats Table -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 0.75rem; background: #fff; padding: 0.75rem 1rem; border-radius: var(--radius-xs); border: 1px solid var(--border);">
+                    <div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Raw Weighted Score</div>
+                        <div style="font-size: 1.15rem; font-weight: 700; font-family: var(--font-mono); color: var(--text);">{{printf "%.2f" $b.RawScore}}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Cohort Mean (μ)</div>
+                        <div style="font-size: 1.15rem; font-weight: 700; font-family: var(--font-mono); color: var(--text-secondary);">{{printf "%.2f" $b.JudgeMean}} (n={{$b.JudgeBallotCount}})</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Cohort StdDev (σ)</div>
+                        <div style="font-size: 1.15rem; font-weight: 700; font-family: var(--font-mono); color: var(--text-secondary);">{{printf "%.2f" $b.JudgeStdDev}}</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Standardized Z</div>
+                        <div style="font-size: 1.15rem; font-weight: 700; font-family: var(--font-mono); color: var(--text-secondary);">
+                            {{if $b.ZScore}}{{printf "%+.2f" $b.ZScore}}{{else}}N/A{{end}}
+                        </div>
+                    </div>
+                    <div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase;">Normalized Score</div>
+                        <div style="font-size: 1.25rem; font-weight: 800; font-family: var(--font-mono); color: var(--accent);">{{printf "%.2f" $b.NormalizedScore}}</div>
+                    </div>
+                </div>
+
+                <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.65rem;">
+                    <strong>Derivation Note:</strong> {{$b.FallbackReason}}
+                </div>
+            </div>
+            {{end}}
+        </div>
+
+        <!-- Section 3: Aggregate Derivation & Arithmetic Formula -->
+        <div class="receipt-card">
+            <h2 style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.75rem; color: var(--text);">3. Aggregate Derivation & Final Score Formula</h2>
+            
+            <div class="receipt-step">
+                <div style="font-weight: 700; font-size: 0.95rem; margin-bottom: 0.25rem;">Step A: Raw Ballot Arithmetic Mean</div>
+                <div style="font-family: var(--font-mono); font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 0.25rem;">
+                    Raw Average = ({{range $i, $s := .Explanation.FormulaBreakdown.RawScores}}{{if gt $i 0}} + {{end}}{{printf "%.2f" $s}}{{end}}) / {{len .Explanation.FormulaBreakdown.RawScores}} = <strong>{{printf "%.2f" .Explanation.FormulaBreakdown.RawAverage}}</strong>
+                </div>
+            </div>
+
+            <div class="receipt-step">
+                <div style="font-weight: 700; font-size: 0.95rem; margin-bottom: 0.25rem;">Step B: Defensible Normalized Mean</div>
+                <div style="font-family: var(--font-mono); font-size: 0.9rem; color: var(--accent); margin-bottom: 0.25rem;">
+                    Normalized Average = ({{range $i, $s := .Explanation.FormulaBreakdown.NormalizedScores}}{{if gt $i 0}} + {{end}}{{printf "%.2f" $s}}{{end}}) / {{len .Explanation.FormulaBreakdown.NormalizedScores}} = <strong>{{printf "%.2f" .Explanation.FormulaBreakdown.NormalizedAverage}}</strong>
+                </div>
+            </div>
+
+            <div class="receipt-step" style="border-left-color: var(--success);">
+                <div style="font-weight: 700; font-size: 0.95rem; margin-bottom: 0.25rem;">Step C: Final Score Storage & Rounding</div>
+                <p style="font-size: 0.9rem; color: var(--text-secondary); margin: 0;">
+                    Policy: {{.Explanation.FormulaBreakdown.RoundingPolicy}}. Resulting in final competition score: <strong style="color: var(--text); font-size: 1.1rem;">{{printf "%.2f" .Explanation.FormulaBreakdown.FinalScore}}</strong>.
+                </p>
+            </div>
+
+            <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 0.85rem 1rem; font-size: 0.85rem; color: var(--text-muted); font-style: italic;">
+                "{{.Explanation.FormulaBreakdown.ApprovedLanguage}}"
+            </div>
+        </div>
+
+        <!-- Section 4: Deterministic Tie-Breaking Policy -->
+        <div class="receipt-card">
+            <h2 style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.75rem; color: var(--text);">4. Deterministic Tie-Breaking & Standings Placement</h2>
+            <p style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
+                When two or more projects have comparable metrics, ties are partitioned deterministically according to the immutable policy:
+            </p>
+            <div style="background: var(--bg-warm); padding: 0.75rem 1rem; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 0.85rem; color: var(--text); margin-bottom: 0.75rem;">
+                Sort Criteria: {{.Explanation.TieBreak.SortOrderRule}}
+            </div>
+            <p style="font-size: 0.85rem; color: var(--text-muted); margin: 0;">
+                Project assigned Rank: <strong>#{{.Explanation.TieBreak.Rank}}</strong> (Tie Group: {{.Explanation.TieBreak.TieGroup}}).
+            </p>
+        </div>
+
+        <!-- Section 5: Canonical Input Digest & Tamper-Evident Receipt -->
+        <div class="receipt-card">
+            <h2 style="font-size: 1.2rem; font-weight: 700; margin-bottom: 0.75rem; color: var(--text);">5. Cryptographic Provenance & Tamper Evidence</h2>
+            <p style="font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
+                This result derivation is cryptographically tied to the canonical JSON input manifest of all raw ballots at the moment of computation. Any alteration to ballot scores or criteria values immediately invalidates this digest.
+            </p>
+            <div style="margin-bottom: 0.75rem;">
+                <span style="font-size: 0.75rem; text-transform: uppercase; font-weight: 700; color: var(--text-muted);">Canonical Manifest SHA-256 Digest:</span>
+                <div class="digest-box" style="margin-top: 0.35rem;">
+                    {{.Explanation.InputDigest}}
+                </div>
+            </div>
+            <div style="display: flex; gap: 2rem; font-size: 0.82rem; color: var(--text-muted); flex-wrap: wrap;">
+                <span>Result Run ID: <code>{{.Explanation.RunID}}</code></span>
+                {{if .Explanation.PublishedAt}}<span>Publication Timestamp: <code>{{.Explanation.PublishedAt}}</code></span>{{end}}
+                <span>Audit State: <strong style="color: var(--success);">TAMPER-EVIDENT & VERIFIABLE</strong></span>
+            </div>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <div class="container footer-inner">
+            <p>Dogfood 2026 Submission & Judging Platform • Explain This Rank Audit Receipt</p>
+        </div>
+    </footer>
+
+    <script>
+    async function verifyProjectReplay(runID, projectID) {
+        const btn = document.getElementById('proj-replay-btn');
+        const banner = document.getElementById('proj-replay-banner');
+        btn.disabled = true;
+        btn.innerText = 'Verifying Arithmetic...';
+
+        try {
+            const resp = await fetch('/api/results/' + runID + '/replay/' + projectID);
+            const data = await resp.json();
+            banner.style.display = 'block';
+
+            if (data.passed) {
+                banner.innerHTML = `
+                    <div style="background: var(--success-bg); border: 1.5px solid var(--success-border); border-radius: var(--radius-md); padding: 1rem 1.25rem; color: var(--success);">
+                        <div style="font-weight: 800; font-size: 1rem; margin-bottom: 0.25rem;">✓ AUDIT RECEIPT VERIFIED: 100% Mathematical Equality</div>
+                        <div style="font-size: 0.85rem; color: var(--text-secondary);">
+                            Independent recalculation directly from raw submitted ballots reproduced the exact score (<strong>${data.recomputed_score || '{{printf "%.2f" .Explanation.FormulaBreakdown.FinalScore}}'}</strong>) and rank (<strong>#${data.recomputed_rank || '{{.Explanation.TieBreak.Rank}}'}</strong>).
+                            Canonical SHA-256 digest is intact.
+                        </div>
+                    </div>
+                `;
+            } else {
+                banner.innerHTML = `
+                    <div style="background: var(--danger-bg); border: 1.5px solid var(--danger-border); border-radius: var(--radius-md); padding: 1rem 1.25rem; color: var(--danger);">
+                        <div style="font-weight: 800; font-size: 1rem; margin-bottom: 0.25rem;">✗ REPLAY MISMATCH DETECTED</div>
+                        <div style="font-size: 0.85rem;">Stored data does not match independent arithmetic derivation. Tampering or data corruption detected.</div>
+                    </div>
+                `;
+            }
+        } catch (err) {
+            banner.style.display = 'block';
+            banner.innerHTML = `<div style="background: var(--danger-bg); padding: 1rem; border-radius: var(--radius-md); color: var(--danger);">Replay verification failed: ${err.message}</div>`;
+        } finally {
+            btn.disabled = false;
+            btn.innerText = 'Verify Independent Replay';
+        }
+    }
+    </script>
+</body>
+</html>

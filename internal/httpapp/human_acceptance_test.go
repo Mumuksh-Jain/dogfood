@@ -2,6 +2,7 @@ package httpapp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1097,4 +1098,197 @@ func TestHumanAcceptance_FlowG_RubricAndBallotLifecycle(t *testing.T) {
 		t.Errorf("expected 403 on participant judge scores access, got %d", rrPartScores.Code)
 	}
 }
+
+// TestHumanAcceptance_FlowH_ResultsAndExplainRank tests defensible scoring, public leaderboard, Explain This Rank receipt, and independent replay.
+func TestHumanAcceptance_FlowH_ResultsAndExplainRank(t *testing.T) {
+	db := setupSeededDB(t)
+	server, err := NewServer(Config{Port: 8080, DB: db})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	handler := server.Handler()
+
+	// 1. Unauthenticated stranger checks /results before any publication
+	reqInit := httptest.NewRequest(http.MethodGet, "/results", nil)
+	rrInit := httptest.NewRecorder()
+	handler.ServeHTTP(rrInit, reqInit)
+	if rrInit.Code != http.StatusOK {
+		t.Fatalf("expected 200 on /results, got %d", rrInit.Code)
+	}
+	if !strings.Contains(rrInit.Body.String(), "No Published Results Yet") {
+		t.Errorf("expected pending results message for stranger before computation")
+	}
+
+	// 2. Participant attempt to compute results -> 403 Forbidden
+	loginPart := url.Values{"demo_user": {"participant_a"}}.Encode()
+	reqLogP := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(loginPart))
+	reqLogP.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrLogP := httptest.NewRecorder()
+	handler.ServeHTTP(rrLogP, reqLogP)
+	cookiePart := rrLogP.Result().Cookies()[0]
+
+	reqPartCompute := httptest.NewRequest(http.MethodPost, "/api/organizer/results/compute", nil)
+	reqPartCompute.AddCookie(cookiePart)
+	rrPartCompute := httptest.NewRecorder()
+	handler.ServeHTTP(rrPartCompute, reqPartCompute)
+	if rrPartCompute.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when participant attempts to compute results, got %d", rrPartCompute.Code)
+	}
+
+	// 3. Organizer logs in and computes draft results
+	loginOrg := url.Values{"demo_user": {"organizer"}}.Encode()
+	reqLogO := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(loginOrg))
+	reqLogO.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrLogO := httptest.NewRecorder()
+	handler.ServeHTTP(rrLogO, reqLogO)
+	cookieOrg := rrLogO.Result().Cookies()[0]
+
+	reqOrgCompute := httptest.NewRequest(http.MethodPost, "/api/organizer/results/compute", nil)
+	reqOrgCompute.AddCookie(cookieOrg)
+	rrOrgCompute := httptest.NewRecorder()
+	handler.ServeHTTP(rrOrgCompute, reqOrgCompute)
+	if rrOrgCompute.Code != http.StatusOK {
+		t.Fatalf("expected 200 on organizer compute results, got %d: %s", rrOrgCompute.Code, rrOrgCompute.Body.String())
+	}
+
+	var draftRun struct {
+		ID          string `json:"id"`
+		Status      string `json:"status"`
+		InputDigest string `json:"input_digest"`
+	}
+	if err := json.NewDecoder(rrOrgCompute.Body).Decode(&draftRun); err != nil {
+		t.Fatalf("failed to decode compute response: %v", err)
+	}
+	if draftRun.ID == "" || draftRun.Status != "DRAFT" || draftRun.InputDigest == "" {
+		t.Fatalf("invalid draft run returned: %+v", draftRun)
+	}
+
+	// 4. Organizer previews draft results on /results
+	reqOrgPreview := httptest.NewRequest(http.MethodGet, "/results", nil)
+	reqOrgPreview.AddCookie(cookieOrg)
+	rrOrgPreview := httptest.NewRecorder()
+	handler.ServeHTTP(rrOrgPreview, reqOrgPreview)
+	if rrOrgPreview.Code != http.StatusOK {
+		t.Fatalf("expected 200 on organizer draft preview, got %d", rrOrgPreview.Code)
+	}
+	previewHTML := rrOrgPreview.Body.String()
+	if !strings.Contains(previewHTML, "Draft Results Preview") {
+		t.Errorf("organizer should see Draft Results Preview")
+	}
+	if !strings.Contains(previewHTML, "Publish Official Results") {
+		t.Errorf("organizer should see Publish Official Results button")
+	}
+
+	// 5. Participant attempt to publish results -> 403 Forbidden
+	reqPartPublish := httptest.NewRequest(http.MethodPost, "/api/organizer/results/"+draftRun.ID+"/publish", nil)
+	reqPartPublish.AddCookie(cookiePart)
+	rrPartPublish := httptest.NewRecorder()
+	handler.ServeHTTP(rrPartPublish, reqPartPublish)
+	if rrPartPublish.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 when participant attempts to publish results, got %d", rrPartPublish.Code)
+	}
+
+	// 6. Organizer publishes official results
+	reqOrgPublish := httptest.NewRequest(http.MethodPost, "/api/organizer/results/"+draftRun.ID+"/publish", nil)
+	reqOrgPublish.AddCookie(cookieOrg)
+	rrOrgPublish := httptest.NewRecorder()
+	handler.ServeHTTP(rrOrgPublish, reqOrgPublish)
+	if rrOrgPublish.Code != http.StatusOK {
+		t.Fatalf("expected 200 on organizer publish results, got %d: %s", rrOrgPublish.Code, rrOrgPublish.Body.String())
+	}
+
+	// 7. Public stranger visits official published /results Leaderboard
+	reqPub := httptest.NewRequest(http.MethodGet, "/results", nil)
+	rrPub := httptest.NewRecorder()
+	handler.ServeHTTP(rrPub, reqPub)
+	if rrPub.Code != http.StatusOK {
+		t.Fatalf("expected 200 on public /results, got %d", rrPub.Code)
+	}
+	pubHTML := rrPub.Body.String()
+	if !strings.Contains(pubHTML, "Official Results Published") {
+		t.Errorf("expected Official Results Published badge in public leaderboard")
+	}
+	if !strings.Contains(pubHTML, "Explain This Rank ↗") {
+		t.Errorf("expected Explain This Rank links in leaderboard")
+	}
+	if !strings.Contains(pubHTML, draftRun.InputDigest) {
+		t.Errorf("expected input digest %s to be displayed in audit header", draftRun.InputDigest)
+	}
+
+	// 8. Public API GET /api/results returns active published run
+	reqAPI := httptest.NewRequest(http.MethodGet, "/api/results", nil)
+	rrAPI := httptest.NewRecorder()
+	handler.ServeHTTP(rrAPI, reqAPI)
+	if rrAPI.Code != http.StatusOK {
+		t.Fatalf("expected 200 on /api/results, got %d", rrAPI.Code)
+	}
+	var apiData struct {
+		Run struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"run"`
+		Entries []struct {
+			ProjectID  string  `json:"project_id"`
+			Rank       int     `json:"rank"`
+			FinalScore float64 `json:"final_score"`
+		} `json:"entries"`
+	}
+	if err := json.NewDecoder(rrAPI.Body).Decode(&apiData); err != nil {
+		t.Fatalf("failed to decode /api/results: %v", err)
+	}
+	if apiData.Run.ID != draftRun.ID || apiData.Run.Status != "PUBLISHED" {
+		t.Errorf("expected active published run %s, got %+v", draftRun.ID, apiData.Run)
+	}
+	if len(apiData.Entries) == 0 {
+		t.Fatalf("expected non-empty entries list")
+	}
+
+	topProjectID := apiData.Entries[0].ProjectID
+
+	// 9. Inspect "Explain This Rank" receipt for top project
+	reqExplain := httptest.NewRequest(http.MethodGet, "/results/"+draftRun.ID+"/projects/"+topProjectID, nil)
+	rrExplain := httptest.NewRecorder()
+	handler.ServeHTTP(rrExplain, reqExplain)
+	if rrExplain.Code != http.StatusOK {
+		t.Fatalf("expected 200 on Explain This Rank page, got %d", rrExplain.Code)
+	}
+	expHTML := rrExplain.Body.String()
+	if !strings.Contains(expHTML, "Explain This Rank") && !strings.Contains(expHTML, "Audit Receipt") {
+		t.Errorf("expected Explain This Rank header in receipt")
+	}
+	if !strings.Contains(expHTML, "mitigates score-scale differences") {
+		t.Errorf("expected approved fairness language in derivation breakdown")
+	}
+	if !strings.Contains(expHTML, draftRun.InputDigest) {
+		t.Errorf("expected input digest to appear in audit receipt")
+	}
+
+	// 10. Independent Replay API Verification
+	reqReplay := httptest.NewRequest(http.MethodGet, "/api/results/"+draftRun.ID+"/replay", nil)
+	rrReplay := httptest.NewRecorder()
+	handler.ServeHTTP(rrReplay, reqReplay)
+	if rrReplay.Code != http.StatusOK {
+		t.Fatalf("expected 200 on /api/results/{run_id}/replay, got %d", rrReplay.Code)
+	}
+	var repReport struct {
+		Passed        bool   `json:"passed"`
+		DigestMatches bool   `json:"digest_matches"`
+		ActualDigest  string `json:"actual_digest"`
+	}
+	if err := json.NewDecoder(rrReplay.Body).Decode(&repReport); err != nil {
+		t.Fatalf("failed to decode replay report: %v", err)
+	}
+	if !repReport.Passed || !repReport.DigestMatches {
+		t.Errorf("expected replay to report PASSED with matching digest, got %+v", repReport)
+	}
+
+	// Per-project replay
+	reqProjReplay := httptest.NewRequest(http.MethodGet, "/api/results/"+draftRun.ID+"/replay/"+topProjectID, nil)
+	rrProjReplay := httptest.NewRecorder()
+	handler.ServeHTTP(rrProjReplay, reqProjReplay)
+	if rrProjReplay.Code != http.StatusOK {
+		t.Fatalf("expected 200 on project replay, got %d", rrProjReplay.Code)
+	}
+}
+
 

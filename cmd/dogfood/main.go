@@ -14,6 +14,7 @@ import (
 	"dogfood/internal/db"
 	"dogfood/internal/httpapp"
 	"dogfood/internal/migrations"
+	"dogfood/internal/results"
 	"dogfood/internal/seed"
 )
 
@@ -24,6 +25,14 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("healthcheck ok")
+		os.Exit(0)
+	}
+
+	if len(os.Args) > 1 && os.Args[1] == "replay" {
+		if err := runReplay(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "replay failed: %v\n", err)
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
@@ -137,4 +146,83 @@ func runServer() error {
 		fmt.Println("server stopped gracefully")
 		return nil
 	}
+}
+
+func runReplay(args []string) error {
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "dogfood.db"
+	}
+
+	database, err := db.Open(db.Config{DSN: dbPath})
+	if err != nil {
+		return fmt.Errorf("failed to open database: %w", err)
+	}
+	defer database.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	svc := results.NewService(database)
+
+	var runID, filterProjectID string
+	if len(args) > 0 {
+		runID = args[0]
+	}
+	if len(args) > 1 {
+		filterProjectID = args[1]
+	}
+
+	if runID == "" {
+		var activeID string
+		err := database.QueryRowContext(ctx, `
+			SELECT id FROM result_runs WHERE status = 'PUBLISHED' ORDER BY created_at DESC LIMIT 1;
+		`).Scan(&activeID)
+		if err != nil {
+			_ = database.QueryRowContext(ctx, `
+				SELECT id FROM result_runs ORDER BY created_at DESC LIMIT 1;
+			`).Scan(&activeID)
+		}
+		if activeID == "" {
+			return fmt.Errorf("no result run found in database. Usage: dogfood replay <result_run_id> [project_id]")
+		}
+		runID = activeID
+	}
+
+	fmt.Printf("=== DOGFOOD 2026 AUDITABLE REPLAY ENGINE ===\n")
+	fmt.Printf("Verifying Result Run: %s\n", runID)
+	if filterProjectID != "" {
+		fmt.Printf("Filtering to Project: %s\n", filterProjectID)
+	}
+
+	report, err := svc.ReplayRun(ctx, runID, filterProjectID)
+	if err != nil {
+		return fmt.Errorf("replay calculation error: %w", err)
+	}
+
+	fmt.Printf("Canonical Input Digest Expected: %s\n", report.ExpectedDigest)
+	fmt.Printf("Canonical Input Digest Computed: %s\n", report.ActualDigest)
+	if report.DigestMatches {
+		fmt.Printf("Digest Integrity: PASS (Cryptographically Identical)\n")
+	} else {
+		fmt.Printf("Digest Integrity: FAIL (Digest Mismatch)\n")
+	}
+
+	fmt.Printf("Projects Evaluated: %d\n", report.EntriesEvaluated)
+
+	if len(report.Mismatches) > 0 {
+		fmt.Printf("\n--- Discrepancies (%d) ---\n", len(report.Mismatches))
+		for _, m := range report.Mismatches {
+			fmt.Printf("  [MISMATCH] Project %s: field %s expected %s, got %s\n", m.ProjectID, m.Field, m.Expected, m.Actual)
+		}
+	}
+
+	fmt.Printf("================================================\n")
+	if report.Passed {
+		fmt.Printf("FINAL VERDICT: PASS (100%% Mathematical Equality Verified)\n")
+		return nil
+	}
+
+	fmt.Printf("FINAL VERDICT: FAIL (Arithmetic or Hash Inconsistency Detected)\n")
+	return fmt.Errorf("independent replay verification failed")
 }

@@ -709,6 +709,56 @@ While automated acceptance suites (`run.py`) verify API endpoints, human users i
 
 ---
 
+### Checkpoint 11 — Migration 0003 & Defensible Results Engine (`internal/results`)
+
+#### Decision 11.1 — Migration 0003 Schema & Audit Invariants
+* **Problem**: Storing results only as transient memory computations or overwriting historical tables destroys auditable provenance and makes retrospective verification impossible.
+* **Solution**: Created `internal/migrations/0003_results_replay.sql`:
+  - `result_runs`: Tracks `algorithm_key`, `algorithm_version`, `config_json`, `cohort_policy`, `tie_policy`, `input_manifest_json`, `input_digest`, `status` (`DRAFT`, `PUBLISHED`, `RETIRED`), and `supersedes_result_run_id`.
+  - `result_entries`: Composite primary key `(result_run_id, project_id)` tracking `raw_score`, `normalized_score`, `final_score`, `rank`, `tie_group`, review counts, fallback counts, and full `explanation_json`.
+  - **Publication Immutability**: Published runs are permanently frozen; corrections or rerun requests create a new superseding run leaving historical publications intact.
+
+#### Decision 11.2 — Defensible Score Aggregation & Strict Claim Control
+* **Problem**: Evaluators possess different subjective scales (lenient vs harsh). Naive raw averaging rewards teams assigned lenient judges and penalizes teams assigned strict judges. However, overselling "fairness" is statistically indefensible due to small sample sizes ($n < 2$) and zero-variance scenarios.
+* **Solution**:
+  - Implemented `ComputeJudgeCohortStats`: computes judge mean $\mu$ and sample standard deviation $\sigma$ ($n-1$ Bessel correction).
+  - Explicit documented fallbacks:
+    - **`FALLBACK_LOW_N`**: If $n < 2$, sample dispersion cannot be estimated. The normalized score defaults to the raw score and the fallback count is incremented.
+    - **`FALLBACK_ZERO_VARIANCE`**: If $n \ge 2$ but $\sigma = 0$ (judge gave identical scores to all projects), $z$-score is mathematically undefined. Fallback preserves raw score.
+    - **Standard Normalization**: If $n \ge 2$ and $\sigma > 0$, $z = (s - \mu)/\sigma$, mapped to uniform $0$–$5$ scale via $s_{\text{norm}} = \text{clamp}(2.5 + z \times 0.8, 0.0, 5.0)$.
+  - **Claim Control**: Approved terminology strictly enforced: *"This statistical normalization mitigates score-scale differences across judges without altering relative preference within a judge's portfolio."* (Zero unsupported claims of "guaranteeing fairness").
+  - **Deterministic Tie-Breaking**: Ordered by `(final_score DESC, raw_score DESC, completed_reviews DESC, project_id ASC)`. Projects with equal scores share a `tie_group`.
+
+---
+
+### Checkpoint 12 — Replay Differentiator: "Explain This Rank" & Audit Engine
+
+#### Decision 12.1 — Transparent Audit Receipt Page (`/results/{run_id}/projects/{project_id}`)
+* **Problem**: Leaderboards typically display opaque numbers without explaining how scores or ranks were derived, eroding participant trust.
+* **Solution**: Implemented human-readable "Explain This Rank" receipt (`web/templates/explain_rank.html`):
+  1. Result run ID, publication status, and UTC timestamp.
+  2. Project title, team name, track, and submission metadata.
+  3. Rubric version identification and criteria breakdown.
+  4. Quorum verification: expected reviews vs completed vs effective count.
+  5. Exact committed ballot IDs and version numbers.
+  6. Evaluator cohort statistics ($\mu, \sigma, n$) and standardized $z$-scores.
+  7. Clear derivation notes when fallbacks are triggered.
+  8. Step-by-step arithmetic from raw average to normalized average to rounded final score.
+  9. Deterministic tie-policy rule and tie-group classification.
+  10. Canonical input manifest SHA-256 digest provenance.
+  11. Interactive 1-click independent replay verification button.
+
+#### Decision 12.2 — Independent Replay CLI & Tamper Detection
+* **Problem**: Auditors and competitors must be able to independently prove that published standings match source ballot math without trusting pre-computed database fields.
+* **Solution**:
+  - Implemented `dogfood replay <run_id> [project_id]` subcommand in `cmd/dogfood/main.go` and `/api/results/{run_id}/replay` HTTP endpoint.
+  - Loads the immutable JSON input manifest from the result run.
+  - Independently recomputes all judge cohort statistics, standardized scores, rankings, and SHA-256 manifest hash directly from source ballots.
+  - Compares recomputed metrics against stored entries and outputs an itemized verification report. Exits `0` on 100% mathematical match, `1` on discrepancy.
+  - Added controlled tampering test (`TestService_ComputePublishAndReplay`) confirming that mutated ballot or result entry data immediately triggers replay failure.
+
+---
+
 ## 4. Verification Matrix
 
 | Checkpoint | Verified Property | Exact Command / Test | Status |
@@ -721,6 +771,8 @@ While automated acceptance suites (`run.py`) verify API endpoints, human users i
 | **Migration** | Checksum drift protection | `TestRunner_ChecksumMismatchFails` | **PASS** |
 | **Migration** | T1 tables exist & T2 absent | `TestMigration0001_RealSchema` | **PASS** (12 tables verified, 0 T2 tables) |
 | **Migration** | Foreign key enforcement | `PRAGMA foreign_keys = ON;` in `TestMigration0001_RealSchema` | **PASS** (invalid FK rejected) |
+| **Migration** | T2 judging schema & immutability | `TestMigration0002_FreshDatabaseAndOrdering` | **PASS** (6 T2 tables verified) |
+| **Migration** | T2 results & replay schema | `TestMigration0003_RealSchema` | **PASS** (`result_runs`, `result_entries`, cascades) |
 | **Seeding** | Exact entity counts | `TestSeed_OfficialFixtures` | **PASS** (1 evt, 8 trk, 40 tm, 41 prj, 122 usr, 4 ses) |
 | **Seeding** | Duplicate candidate preservation | `SELECT COUNT(*) FROM projects WHERE team_id = 'tm_07'` | **PASS** (exactly 2 preserved) |
 | **Seeding** | Second boot no-op | `Load` re-run in `TestSeed_OfficialFixtures` | **PASS** (`AlreadySeeded = true`, 0 duplicates) |
@@ -737,6 +789,13 @@ While automated acceptance suites (`run.py`) verify API endpoints, human users i
 | **Human Flow C** | Project draft to gallery lifecycle | `TestHumanAcceptance_FlowC_Project` | **PASS** (Draft hidden -> Edit -> Submit -> Public) |
 | **Human Flow D** | Organizer workspace & tracks/prizes | `TestHumanAcceptance_FlowD_Organizer` | **PASS** (All tabs render, track/prize created, 403 guards) |
 | **Human Flow E** | Judge workspace & peer isolation | `TestHumanAcceptance_FlowE_Judge` | **PASS** (Identity rendered, T2 notice, 403 guards) |
+| **Human Flow F** | Strict Role-UI isolation | `TestHumanAcceptance_FlowF_RoleUI_Isolation` | **PASS** (Participant, Judge, Organizer, Admin isolation) |
+| **Human Flow G** | Rubrics & Ballot lifecycle | `TestHumanAcceptance_FlowG_RubricAndBallotLifecycle` | **PASS** (Draft -> Submit -> Lock -> Peer 403) |
+| **Human Flow H** | Results Leaderboard & Explain Rank | `TestHumanAcceptance_FlowH_ResultsAndExplainRank` | **PASS** (Compute -> Publish -> Public -> Explain -> Replay) |
+| **Results Engine** | Statistical cohort & normalization | `TestEngine_NormalizeBallot_FallbacksAndStandardization` | **PASS** (n=1, n=2, zero var, z-score, clamp) |
+| **Results Engine** | Determinism & Tie Breaking | `TestEngine_DeterministicTiePolicyAndRanking` | **PASS** (Identical order, deterministic tie group) |
+| **Results Engine** | Replay & Tamper Detection | `TestService_ComputePublishAndReplay` | **PASS** (100% equal replay; tampered data fails) |
+| **CLI Replay** | Independent container replay probe | `docker exec dogfood-dogfood-1 /dogfood replay` | **PASS** (100% Mathematical Equality Verified) |
 | **Checker** | T1: Gallery is public | `python official/run.py .dogfood.toml` | **PASS** (HTTP 200) |
 | **Checker** | T1: Fixture projects shown | `python official/run.py .dogfood.toml` | **PASS** ("Glass Signal" present) |
 | **Checker** | T1: Closed event refuses submissions | `python official/run.py .dogfood.toml` | **PASS** (HTTP 403) |
@@ -745,6 +804,7 @@ While automated acceptance suites (`run.py`) verify API endpoints, human users i
 | **Checker** | T2: Participant blocked | `python official/run.py .dogfood.toml` | **PASS** (HTTP 403) |
 | **Checker** | T2: CSV export works | `python official/run.py .dogfood.toml` | **PASS** (HTTP 200, comma header) |
 | **Checker** | Full Acceptance Suite | `python official/run.py .dogfood.toml` | **PASS** (`claimed T1 T2, verified T1 T2`) |
+
 
 ---
 
