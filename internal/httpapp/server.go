@@ -14,10 +14,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	"dogfood/internal/assignment"
 	"dogfood/internal/auth"
+	"dogfood/internal/judging"
 	"dogfood/web"
 )
 
@@ -29,10 +32,12 @@ type Config struct {
 
 // Server encapsulates the HTTP server and routing.
 type Server struct {
-	httpServer *http.Server
-	listener   net.Listener
-	db         *sql.DB
-	tmpl       *template.Template
+	httpServer        *http.Server
+	listener          net.Listener
+	db                *sql.DB
+	tmpl              *template.Template
+	judgingService    *judging.Service
+	assignmentService *assignment.Service
 }
 
 // ProjectView holds project data for UI and API representations.
@@ -171,13 +176,31 @@ type DashboardData struct {
 	CurrentInviteURL string
 
 	// Organizer workspace
-	AllTeams    []OrganizerTeamView
-	AllProjects []ProjectView
-	Tracks      []TrackCount
-	Prizes      []PrizeView
+	AllTeams           []OrganizerTeamView
+	AllProjects        []ProjectView
+	Tracks             []TrackCount
+	Prizes             []PrizeView
+	Rubrics            []judging.RubricVersion
+	AssignmentRunCount int
+	TotalAssignments   int
+
+	// Judge workspace
+	JudgeAssignments []judging.AssignmentDetail
 
 	Message string
 	Error   string
+}
+
+// EvaluationData is passed to evaluation.html template.
+type EvaluationData struct {
+	EventName    string
+	User         *auth.Identity
+	Assignment   *judging.AssignmentDetail
+	Rubric       *judging.RubricVersion
+	LatestBallot *judging.BallotVersion
+	IsSubmitted  bool
+	Message      string
+	Error        string
 }
 
 // ProjectDetailData is passed to project_detail.html.
@@ -242,6 +265,21 @@ func NewServer(cfg Config) (*Server, error) {
 
 	tmpl, err := template.New("").Funcs(template.FuncMap{
 		"lower": strings.ToLower,
+		"scoreFor": func(ballot *judging.BallotVersion, critID string) string {
+			if ballot == nil || ballot.CriteriaScores == nil {
+				return ""
+			}
+			if v, ok := ballot.CriteriaScores[critID]; ok {
+				return fmt.Sprintf("%.1f", v)
+			}
+			return ""
+		},
+		"scoreValue": func(ballot *judging.BallotVersion, critID string) float64 {
+			if ballot == nil || ballot.CriteriaScores == nil {
+				return 0
+			}
+			return ballot.CriteriaScores[critID]
+		},
 	}).ParseFS(tmplFS, "*.html")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
@@ -253,8 +291,10 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		db:   cfg.DB,
-		tmpl: tmpl,
+		db:                cfg.DB,
+		tmpl:              tmpl,
+		judgingService:    judging.NewService(cfg.DB),
+		assignmentService: assignment.NewService(cfg.DB),
 	}
 
 	mux := http.NewServeMux()
@@ -307,6 +347,17 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// 10. CSV export route (organizer role enforcement)
 	mux.HandleFunc("GET /api/export.csv", s.handleCSVExport)
+
+	// 11. Evaluations & Rubrics (T2 judging lifecycle)
+	mux.HandleFunc("GET /evaluations/{id}", s.handleEvaluationPage)
+	mux.HandleFunc("POST /evaluations/{id}", s.handleEvaluationSubmit)
+	mux.HandleFunc("GET /api/assignments/{id}/ballot", s.handleGetBallotAPI)
+	mux.HandleFunc("POST /api/assignments/{id}/ballot", s.handleSaveDraftBallotAPI)
+	mux.HandleFunc("POST /api/assignments/{id}/ballot/submit", s.handleSubmitBallotAPI)
+	mux.HandleFunc("GET /api/events/{event_id}/rubric", s.handleGetRubricAPI)
+	mux.HandleFunc("POST /api/events/{event_id}/rubrics", s.handleCreateRubricDraftAPI)
+	mux.HandleFunc("POST /api/rubrics/{rubric_version_id}/publish", s.handlePublishRubricAPI)
+	mux.HandleFunc("POST /api/organizer/assignments/run", s.handleRunAssignments)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	s.httpServer = &http.Server{
@@ -371,6 +422,59 @@ func (s *Server) ensureDemoUsers(ctx context.Context) error {
 		tokenHash := auth.HashToken(token)
 		_, _ = s.db.ExecContext(ctx, "UPDATE sessions SET revoked_at = NULL WHERE token_hash = ?;", tokenHash)
 	}
+
+	// Ensure default rubric is published for the event
+	if eventID != "" && s.judgingService != nil {
+		_, _ = s.judgingService.EnsureDefaultRubric(ctx, eventID, "usr_organizer")
+	}
+
+	// Ensure judge profiles and track eligibility exist for event judges
+	if eventID != "" {
+		nowStr := time.Now().UTC().Format(time.RFC3339)
+		judgeRows, err := s.db.QueryContext(ctx, "SELECT user_id FROM event_roles WHERE event_id = ? AND role = 'judge';", eventID)
+		if err == nil {
+			var judgeUIDs []string
+			for judgeRows.Next() {
+				var juid string
+				if err := judgeRows.Scan(&juid); err == nil {
+					judgeUIDs = append(judgeUIDs, juid)
+				}
+			}
+			judgeRows.Close()
+
+			for _, juid := range judgeUIDs {
+				_, _ = s.db.ExecContext(ctx, `
+					INSERT INTO judge_profiles (event_id, user_id, capacity, active, invited_at, accepted_at)
+					VALUES (?, ?, 10, 1, ?, ?)
+					ON CONFLICT(event_id, user_id) DO UPDATE SET active = 1, capacity = 10;
+				`, eventID, juid, nowStr, nowStr)
+
+				var trackCount int
+				_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM judge_track_eligibility WHERE event_id = ? AND judge_user_id = ?;", eventID, juid).Scan(&trackCount)
+				if trackCount == 0 {
+					_, _ = s.db.ExecContext(ctx, `
+						INSERT INTO judge_track_eligibility (event_id, judge_user_id, track_id, eligible, source, updated_at)
+						SELECT ?, ?, id, 1, 'auto', ? FROM tracks WHERE event_id = ?
+						ON CONFLICT(event_id, judge_user_id, track_id) DO NOTHING;
+					`, eventID, juid, nowStr, eventID)
+				}
+			}
+		}
+	}
+
+	// Auto-seed assignments if none exist yet for the event
+	if eventID != "" && s.assignmentService != nil {
+		var assignmentCount int
+		_ = s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM assignments WHERE event_id = ?;", eventID).Scan(&assignmentCount)
+		if assignmentCount == 0 {
+			_, _ = s.assignmentService.GenerateAssignments(ctx, assignment.Config{
+				EventID:       eventID,
+				TargetReviews: 3,
+				CreatedBy:     "usr_organizer",
+			})
+		}
+	}
+
 	return nil
 }
 
@@ -879,6 +983,17 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+
+		if s.judgingService != nil {
+			data.Rubrics, _ = s.judgingService.ListRubrics(r.Context(), data.EventID)
+		}
+		_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM assignments WHERE event_id = ?;", data.EventID).Scan(&data.TotalAssignments)
+		_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM assignment_runs WHERE event_id = ?;", data.EventID).Scan(&data.AssignmentRunCount)
+	}
+
+	// Judge overview: fetch assigned projects
+	if data.IsJudge && s.judgingService != nil {
+		data.JudgeAssignments, _ = s.judgingService.ListJudgeAssignments(r.Context(), data.EventID, user.UserID)
 	}
 
 	// Fetch user's team if participant
@@ -2187,13 +2302,447 @@ func (s *Server) handleJudgeScores(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	targetUID := id.UserID
+	if resolvedTarget != "" {
+		targetUID = resolvedTarget
+	}
+
+	scoresList := []any{}
+	rows, err := s.db.QueryContext(r.Context(), `
+		SELECT bv.id, bv.assignment_id, bv.project_id, s.title, bv.save_kind, bv.scores_json, bv.comment, bv.created_at
+		FROM ballot_versions bv
+		JOIN projects p ON bv.project_id = p.id
+		JOIN submissions s ON p.id = s.project_id AND s.version_no = (SELECT MAX(version_no) FROM submissions WHERE project_id = p.id)
+		WHERE bv.judge_user_id = ?
+		ORDER BY bv.created_at DESC;
+	`, targetUID)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var bID, aID, pID, title, saveKind, scoresJSON, comment, createdAt string
+			if err := rows.Scan(&bID, &aID, &pID, &title, &saveKind, &scoresJSON, &comment, &createdAt); err == nil {
+				var parsedScores map[string]any
+				_ = json.Unmarshal([]byte(scoresJSON), &parsedScores)
+				scoresList = append(scoresList, map[string]any{
+					"ballot_id":     bID,
+					"assignment_id": aID,
+					"project_id":    pID,
+					"project_title": title,
+					"save_kind":     saveKind,
+					"scores":        parsedScores,
+					"comment":       comment,
+					"created_at":    createdAt,
+				})
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"judge_id":   id.UserID,
+		"judge_id":   targetUID,
 		"judge_name": id.DisplayName,
-		"scores":     []any{},
+		"scores":     scoresList,
 	})
+}
+
+// --- T2 Judging: Evaluations & Rubrics Lifecycle Handlers ---
+
+func (s *Server) handleEvaluationPage(w http.ResponseWriter, r *http.Request) {
+	assignmentID := r.PathValue("id")
+	if assignmentID == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	user := s.getCurrentUser(r)
+	if user == nil {
+		http.Redirect(w, r, "/login?return_to="+url.QueryEscape(r.URL.String()), http.StatusSeeOther)
+		return
+	}
+
+	if !user.HasRole("judge") && !canAdminister(user) {
+		http.Error(w, "Forbidden: Only assigned judges can view evaluation ballots", http.StatusForbidden)
+		return
+	}
+
+	detail, err := s.judgingService.GetAssignmentDetail(r.Context(), assignmentID, user.UserID, canAdminister(user))
+	if err != nil {
+		if errors.Is(err, judging.ErrForbidden) {
+			http.Error(w, "Forbidden: Peer isolation enforced — you are not assigned to evaluate this project", http.StatusForbidden)
+			return
+		}
+		if errors.Is(err, judging.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := EvaluationData{
+		EventName:    "Dogfood 2026",
+		User:         user,
+		Assignment:   detail,
+		Rubric:       detail.Rubric,
+		LatestBallot: detail.LatestBallot,
+		IsSubmitted:  detail.IsSubmitted,
+		Message:      r.URL.Query().Get("msg"),
+		Error:        r.URL.Query().Get("error"),
+	}
+
+	var eventName string
+	if err := s.db.QueryRowContext(r.Context(), "SELECT name FROM events WHERE id = ?;", detail.EventID).Scan(&eventName); err == nil {
+		data.EventName = eventName
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	if err := s.tmpl.ExecuteTemplate(w, "evaluation.html", data); err != nil {
+		http.Error(w, "internal server error: "+err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) handleEvaluationSubmit(w http.ResponseWriter, r *http.Request) {
+	assignmentID := r.PathValue("id")
+	if assignmentID == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	user := s.getCurrentUser(r)
+	if user == nil {
+		http.Redirect(w, r, "/login?return_to="+url.QueryEscape("/evaluations/"+assignmentID), http.StatusSeeOther)
+		return
+	}
+
+	if !user.HasRole("judge") && !canAdminister(user) {
+		http.Error(w, "Forbidden: Only assigned judges can submit evaluations", http.StatusForbidden)
+		return
+	}
+
+	_ = r.ParseForm()
+	action := strings.ToLower(strings.TrimSpace(r.FormValue("action")))
+	if action == "" {
+		action = "draft"
+	}
+	comment := strings.TrimSpace(r.FormValue("comment"))
+
+	detail, err := s.judgingService.GetAssignmentDetail(r.Context(), assignmentID, user.UserID, canAdminister(user))
+	if err != nil {
+		if errors.Is(err, judging.ErrForbidden) {
+			http.Error(w, "Forbidden: Peer isolation enforced", http.StatusForbidden)
+			return
+		}
+		if errors.Is(err, judging.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if detail.IsSubmitted {
+		http.Redirect(w, r, "/evaluations/"+assignmentID+"?error="+url.QueryEscape("Evaluation has already been submitted and cannot be modified"), http.StatusSeeOther)
+		return
+	}
+
+	scores := make(map[string]float64)
+	for _, c := range detail.Rubric.Criteria {
+		valStr := r.FormValue("criterion_" + c.ID)
+		if valStr == "" {
+			valStr = r.FormValue(c.ID)
+		}
+		if valStr != "" {
+			if v, err := strconv.ParseFloat(valStr, 64); err == nil {
+				scores[c.ID] = v
+			}
+		}
+	}
+
+	if action == "submit" {
+		_, err := s.judgingService.SubmitBallot(r.Context(), assignmentID, user.UserID, scores, comment)
+		if err != nil {
+			if errors.Is(err, judging.ErrBallotSubmitted) {
+				http.Redirect(w, r, "/evaluations/"+assignmentID+"?error="+url.QueryEscape("Ballot has already been submitted and is locked"), http.StatusSeeOther)
+				return
+			}
+			http.Redirect(w, r, "/evaluations/"+assignmentID+"?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/evaluations/"+assignmentID+"?msg="+url.QueryEscape("Evaluation submitted successfully. Ballot is permanently locked."), http.StatusSeeOther)
+		return
+	}
+
+	// Draft
+	_, err = s.judgingService.SaveDraftBallot(r.Context(), assignmentID, user.UserID, scores, comment)
+	if err != nil {
+		if errors.Is(err, judging.ErrBallotSubmitted) {
+			http.Redirect(w, r, "/evaluations/"+assignmentID+"?error="+url.QueryEscape("Ballot has already been submitted and cannot be edited"), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/evaluations/"+assignmentID+"?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+
+	http.Redirect(w, r, "/evaluations/"+assignmentID+"?msg="+url.QueryEscape("Evaluation draft saved successfully."), http.StatusSeeOther)
+}
+
+func (s *Server) handleGetBallotAPI(w http.ResponseWriter, r *http.Request) {
+	assignmentID := r.PathValue("id")
+	if assignmentID == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+		return
+	}
+
+	id, err := auth.Authenticate(r.Context(), s.db, r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	detail, err := s.judgingService.GetAssignmentDetail(r.Context(), assignmentID, id.UserID, canAdminister(id))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		if errors.Is(err, judging.ErrForbidden) {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: peer isolation enforced"})
+			return
+		}
+		if errors.Is(err, judging.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "not found"})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(detail)
+}
+
+func (s *Server) handleSaveDraftBallotAPI(w http.ResponseWriter, r *http.Request) {
+	assignmentID := r.PathValue("id")
+	id, err := auth.Authenticate(r.Context(), s.db, r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	var req struct {
+		Scores  map[string]float64 `json:"scores"`
+		Comment string             `json:"comment"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json payload: " + err.Error()})
+		return
+	}
+
+	ballot, err := s.judgingService.SaveDraftBallot(r.Context(), assignmentID, id.UserID, req.Scores, req.Comment)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		if errors.Is(err, judging.ErrBallotSubmitted) {
+			w.WriteHeader(http.StatusConflict) // 409
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "ballot already submitted and cannot be modified"})
+			return
+		}
+		if errors.Is(err, judging.ErrForbidden) {
+			w.WriteHeader(http.StatusForbidden) // 403
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: peer isolation enforced"})
+			return
+		}
+		if errors.Is(err, judging.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound) // 404
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "assignment not found"})
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(ballot)
+}
+
+func (s *Server) handleSubmitBallotAPI(w http.ResponseWriter, r *http.Request) {
+	assignmentID := r.PathValue("id")
+	id, err := auth.Authenticate(r.Context(), s.db, r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+
+	var req struct {
+		Scores  map[string]float64 `json:"scores"`
+		Comment string             `json:"comment"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json payload: " + err.Error()})
+		return
+	}
+
+	ballot, err := s.judgingService.SubmitBallot(r.Context(), assignmentID, id.UserID, req.Scores, req.Comment)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		if errors.Is(err, judging.ErrBallotSubmitted) {
+			w.WriteHeader(http.StatusConflict) // 409
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "ballot already submitted and cannot be modified"})
+			return
+		}
+		if errors.Is(err, judging.ErrForbidden) {
+			w.WriteHeader(http.StatusForbidden) // 403
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: peer isolation enforced"})
+			return
+		}
+		if errors.Is(err, judging.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound) // 404
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "assignment not found"})
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(ballot)
+}
+
+func (s *Server) handleGetRubricAPI(w http.ResponseWriter, r *http.Request) {
+	eventID := r.PathValue("event_id")
+	trackID := r.URL.Query().Get("track_id")
+
+	rubric, err := s.judgingService.GetPublishedRubric(r.Context(), eventID, trackID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		if errors.Is(err, judging.ErrNotFound) {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no published rubric found"})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(rubric)
+}
+
+func (s *Server) handleCreateRubricDraftAPI(w http.ResponseWriter, r *http.Request) {
+	eventID := r.PathValue("event_id")
+	id, err := auth.Authenticate(r.Context(), s.db, r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+	if !canAdminister(id) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: only organizers can manage rubrics"})
+		return
+	}
+
+	var req struct {
+		RubricID string              `json:"rubric_id"`
+		TrackID  string              `json:"track_id"`
+		Criteria []judging.Criterion `json:"criteria"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid json payload: " + err.Error()})
+		return
+	}
+
+	rv, err := s.judgingService.CreateRubricDraft(r.Context(), eventID, req.RubricID, req.TrackID, req.Criteria, id.UserID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(rv)
+}
+
+func (s *Server) handlePublishRubricAPI(w http.ResponseWriter, r *http.Request) {
+	rubricVersionID := r.PathValue("rubric_version_id")
+	id, err := auth.Authenticate(r.Context(), s.db, r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+	if !canAdminister(id) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: only organizers can publish rubrics"})
+		return
+	}
+
+	rv, err := s.judgingService.PublishRubricVersion(r.Context(), rubricVersionID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(rv)
+}
+
+func (s *Server) handleRunAssignments(w http.ResponseWriter, r *http.Request) {
+	id, err := auth.Authenticate(r.Context(), s.db, r)
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+	if !canAdminister(id) {
+		http.Error(w, "Forbidden: organizer role required", http.StatusForbidden)
+		return
+	}
+
+	var eventID string
+	_ = s.db.QueryRowContext(r.Context(), "SELECT id FROM events ORDER BY created_at ASC LIMIT 1;").Scan(&eventID)
+
+	_, err = s.assignmentService.GenerateAssignments(r.Context(), assignment.Config{
+		EventID:       eventID,
+		TargetReviews: 3,
+		CreatedBy:     id.UserID,
+	})
+	if err != nil {
+		http.Redirect(w, r, "/dashboard?error="+url.QueryEscape("Assignment run failed: "+err.Error()), http.StatusSeeOther)
+		return
+	}
+
+	http.Redirect(w, r, "/dashboard?msg="+url.QueryEscape("Deterministic judge assignments generated successfully."), http.StatusSeeOther)
 }
 
 func (s *Server) handleCSVExport(w http.ResponseWriter, r *http.Request) {

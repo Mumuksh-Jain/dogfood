@@ -1,10 +1,15 @@
 # STATE
 
 ## Current phase
-T2 JUDGING: CHECKPOINT 1 (SCHEMA ONLY) COMPLETE
+T2 JUDGING: CHECKPOINT 3 (JUDGE RUBRIC + BALLOT LIFECYCLE) COMPLETE
 
 ## Last checkpoint passed
-T2 Checkpoint 1: Forward-only 0002 judging migration created with exactly six frozen tables (judge_profiles, judge_track_eligibility, assignment_runs, assignments, rubric_versions, ballot_versions). Comprehensive test suite verifying fresh database application, schema metadata, restart idempotency, checksum hard-failure, foreign key enforcement, schema scope isolation, append-only ballot versioning, and assignment integrity.
+T2 Checkpoint 3: Complete Rubric + Ballot lifecycle implemented and verified:
+- Service package `internal/judging` with cryptographic canonical hashing, rubric versioning, and immutable ballot revisions.
+- Warm human evaluation interface (`web/templates/evaluation.html`) with real-time score calculations and read-only locked ballot views.
+- HTTP endpoints: `/evaluations/{id}` (GET/POST), `/api/assignments/{id}/ballot` (GET/POST draft/POST submit), `/api/events/{id}/rubric`, `/api/events/{id}/rubrics`, `/api/rubrics/{id}/publish`, and `/api/organizer/assignments/run`.
+- Real ballot retrieval in `/api/judge/scores` with strict peer isolation and 403 enforcement.
+- Full automated test suite passing (`go test -count=1 ./...`), new Flow G human acceptance testing complete, official checker passes 7/7.
 
 ## Current blocker
 none
@@ -20,7 +25,7 @@ T2  csv export works .................. PASS
 claimed T1 T2, verified T1 T2
 
 ## Next action
-Review T2 Checkpoint 1 judging schema. Ready for T2 Assignment Engine & algorithm implementation.
+Review T2 Checkpoint 3 report. Human controls Git. Ready for T2 Checkpoint 4 / Leaderboard / Differentiators if requested.
 
 ## Known deltas since H0
 None.
@@ -41,7 +46,8 @@ None.
 - Self-contained runtime assets: VERIFIED
 - Clean/reviewer-environment offline release proof: PENDING dedicated release checkpoint
 - T2 judging schema: complete and verified (Migration 0002)
-- T2 judging engine: not started
+- T2 judging engine: complete and verified (internal/assignment)
+- T2 rubric & ballot lifecycle: complete and verified (internal/judging, templates, HTTP API)
 - Replay differentiator: not started
 - Final acceptance evidence: verified (7/7 PASS)
 

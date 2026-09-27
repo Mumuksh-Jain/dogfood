@@ -653,6 +653,62 @@ While automated acceptance suites (`run.py`) verify API endpoints, human users i
 
 ---
 
+### Checkpoint 9 — Tier 2 Judging Architecture & Deterministic Assignment Engine
+
+#### Decision 9.1 — Migration 0002: Exact Six T2 Tables & Append-Only Ballots
+* **Problem**: Storing mutable current ballot states or combining rubrics/ballots prematurely risks data corruption, silent clobbering of completed reviews, and schema drift.
+* **Solution**: Implemented `internal/migrations/0002_t2_judging.sql` with exactly six frozen tables:
+  1. `judge_profiles`: event judging capacity & active lifecycle.
+  2. `judge_track_eligibility`: explicit judge-to-track eligibility graph.
+  3. `assignment_runs`: auditable execution runs preserving structured infeasibility.
+  4. `rubric_versions`: immutable versioned criteria with canonical JSON.
+  5. `assignments`: judge-to-project allocation with `UNIQUE(event_id, judge_user_id, project_id) WHERE status NOT IN ('CANCELLED', 'REASSIGNED')`.
+  6. `ballot_versions`: append-only score history without mutable current-flag columns.
+
+---
+
+#### Decision 9.2 — Deterministic Min-Cost Max-Flow Assignment Engine (`internal/assignment`)
+* **Problem**: Greedy assignment algorithms easily fail when local track capacity creates bottlenecks despite adequate global nominal capacity. Furthermore, randomized matching produces irreproducible results between runs.
+* **Solution**:
+  - Implemented bipartite matching via Min-Cost Max-Flow using the Successive Shortest Path (SSP) algorithm with SPFA.
+  - **Deterministic Ordering**: Projects sorted strictly by `(track_id ASC, project_id ASC)`; judges sorted strictly by `judge_id ASC`.
+  - **Load Balancing**: Unit capacity edges $S \to J_i$ carry marginal cost $(W_i + c - 1) \times 1000 + i$, naturally distributing work evenly across judges before assigning multiple projects to any single judge.
+  - **Structured Infeasibility**: If `MaxFlow < TotalNeeded`, the engine records first-class `infeasibility_code` (`INSUFFICIENT_CAPACITY`, `NO_ELIGIBLE_JUDGE`, `INSUFFICIENT_TRACK_JUDGES`) along with affected project and track IDs, creating zero invalid/fake assignments.
+  - **Completed Work Preservation**: Active and completed assignments are respected as prior constraints. Reassignment links to predecessor rows via `supersedes_assignment_id`.
+
+---
+
+### Checkpoint 10 — Judge Rubric + Ballot Lifecycle (`internal/judging`)
+
+#### Decision 10.1 — Cryptographic Rubric Versioning & Canonical Criteria
+* **Problem**: Changing scoring criteria after judging begins compromises scoring integrity and invalidates previously submitted ballots.
+* **Solution**:
+  - Implemented `internal/judging/service.go` managing `rubric_versions`.
+  - Criteria definitions (`functionality`, `quality`, `innovation`, `impact`) are sorted canonically by ID and serialized to compute a deterministic SHA-256 `configuration_hash`.
+  - Version numbers increment per logical rubric (`version_no`).
+  - Drafts are mutable by organizers; upon publication (`state = 'PUBLISHED'`), rubrics are permanently locked. Previous active rubrics are transitioned to `RETIRED`.
+
+#### Decision 10.2 — Append-Only Ballot Versions & Submission Immutability
+* **Problem**: Modifying existing ballot rows in place destroys evaluation provenance and risks race conditions.
+* **Solution**:
+  - Evaluators generate versioned revisions in `ballot_versions` with explicit `save_kind` (`DRAFT` or `SUBMISSION`).
+  - Working drafts update assignment status to `STARTED` and allow repeated editing.
+  - Final submission strictly validates that all required criteria are present and within `[min_score, max_score]`, computes weighted score $\sum(s_i \cdot w_i) / \sum w_i$, marks assignment `COMPLETED`, and sets `save_kind = 'SUBMISSION'`.
+  - **Hard Immutability**: Any subsequent draft save or submission attempt for a submitted assignment is rejected immediately with `409 Conflict` (HTTP API) or informative error notification (Web UI).
+
+#### Decision 10.3 — Defense-in-Depth Peer Isolation
+* **Problem**: Evaluators must never be influenced by peer scoring or able to inspect peer reviews.
+* **Solution**:
+  - `GetAssignmentDetail` enforces that caller's user ID matches `assignments.judge_user_id` (unless platform administrator).
+  - Unauthorized evaluators or participants accessing `/evaluations/{id}` or `/api/assignments/{id}/ballot` receive `403 Forbidden`.
+  - `GET /api/judge/scores` returns only the caller's own submitted scores; querying a peer's scores (`?judge=judge_a` from `judge_b`) strictly yields `403 Forbidden`.
+
+#### Challenge 10.1 — SQLite Single-Connection Deadlock on Nested Cursors
+* **Problem**: In `ListJudgeAssignments`, calling `s.GetLatestBallot(ctx, id)` inside the `for rows.Next()` cursor iteration stalled the HTTP worker indefinitely when SQLite max open connections was capped at 1.
+* **Solution**: Refactored `ListJudgeAssignments` to eagerly scan all assignments into a slice, explicitly call `rows.Close()`, and then load latest ballot details in a separate pass.
+
+---
+
 ## 4. Verification Matrix
 
 | Checkpoint | Verified Property | Exact Command / Test | Status |

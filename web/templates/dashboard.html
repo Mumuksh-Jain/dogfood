@@ -281,6 +281,87 @@
                     </table>
                 </div>
             </div>
+
+            <hr class="divider">
+
+            <!-- Judging Rubrics -->
+            <div id="rubrics" style="margin-top: 1rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem;">
+                    <div>
+                        <h4 style="margin: 0;">Evaluation Rubrics</h4>
+                        <p class="subtitle" style="margin: 0; font-size: 0.85rem;">Versioned scoring rubrics with cryptographic configuration hashes.</p>
+                    </div>
+                </div>
+
+                {{if .Rubrics}}
+                <div style="display: flex; flex-direction: column; gap: 1rem;">
+                    {{range .Rubrics}}
+                    <div class="card" style="background: var(--bg-warm-light); padding: 1.25rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 0.5rem;">
+                            <div>
+                                <strong>Rubric: <code>{{.RubricID}}</code> (v{{.VersionNo}})</strong>
+                                {{if .TrackID}}<span class="tag">Track: {{.TrackID}}</span>{{else}}<span class="tag">Event Default</span>{{end}}
+                            </div>
+                            <div>
+                                {{if eq .State "PUBLISHED"}}
+                                <span class="status-badge status-open">PUBLISHED</span>
+                                {{else}}
+                                <span class="status-badge status-closed">{{.State}}</span>
+                                <form action="/api/rubrics/{{.ID}}/publish" method="POST" style="display:inline; margin-left: 0.5rem;">
+                                    <button type="submit" class="btn-sm btn-primary">Publish Now</button>
+                                </form>
+                                {{end}}
+                            </div>
+                        </div>
+                        <div style="margin: 0.5rem 0; font-size: 0.8rem; color: var(--text-muted);">
+                            Hash: <code>{{.ConfigurationHash}}</code> &bull; Created: {{.CreatedAt}}
+                        </div>
+                        <div style="margin-top: 0.75rem;">
+                            <strong>Criteria ({{len .Criteria}}):</strong>
+                            <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.35rem;">
+                                {{range .Criteria}}
+                                <span class="tag" style="background: var(--bg-card); font-size: 0.8rem;">
+                                    {{.Name}} ({{.MinScore}}-{{.MaxScore}}, weight {{.Weight}}x)
+                                </span>
+                                {{end}}
+                            </div>
+                        </div>
+                    </div>
+                    {{end}}
+                </div>
+                {{else}}
+                <p class="text-muted">No rubrics created yet.</p>
+                {{end}}
+            </div>
+
+            <hr class="divider">
+
+            <!-- Deterministic Judge Assignments -->
+            <div id="assignments" style="margin-top: 1rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
+                    <div>
+                        <h4 style="margin: 0;">Deterministic Judge Assignments</h4>
+                        <p class="subtitle" style="margin: 0; font-size: 0.85rem;">Constraint-aware deterministic matching engine with reproducible seed.</p>
+                    </div>
+                    <form action="/api/organizer/assignments/run" method="POST">
+                        <button type="submit" class="btn-sm btn-primary">Run Assignment Engine</button>
+                    </form>
+                </div>
+                <div class="meta-banner" style="margin-top: 0.5rem;">
+                    <div class="meta-cell">
+                        <span class="label">Total Assignments</span>
+                        <span class="value">{{.TotalAssignments}} assigned</span>
+                    </div>
+                    <div class="meta-cell">
+                        <span class="label">Assignment Runs</span>
+                        <span class="value">{{.AssignmentRunCount}} completed</span>
+                    </div>
+                    <div class="meta-cell">
+                        <span class="label">Matching Strategy</span>
+                        <span class="value">Track-eligible, Capacity-bounded</span>
+                    </div>
+                </div>
+            </div>
         </section>
         {{end}}
 
@@ -290,8 +371,11 @@
         {{if .IsJudge}}
         <section class="card section-card" id="judge-workspace">
             <div class="section-header">
-                <h3>Judge Workspace</h3>
-                <span class="role-pill pill-judge">Judge</span>
+                <div>
+                    <h3>Judge Workspace</h3>
+                    <p class="subtitle">Evaluate your assigned projects according to the official event rubric.</p>
+                </div>
+                <span class="role-pill pill-judge">Official Judge</span>
             </div>
             <div class="meta-banner" style="margin-top: 1rem;">
                 <div class="meta-cell">
@@ -306,15 +390,85 @@
                     <span class="label">Active Event</span>
                     <span class="value">{{.EventName}}</span>
                 </div>
-            </div>
-            <div class="card" style="background: var(--bg-warm-light); border-left: 4px solid var(--accent); padding: 1.25rem;">
-                <h4 style="margin-top: 0;">Evaluation &amp; Assignments</h4>
-                <p>You are authenticated as an official evaluator for <strong>{{.EventName}}</strong>.</p>
-                <div class="alert alert-warning" style="margin: 1rem 0;">
-                    <strong>Assignments Not Yet Configured:</strong> Review assignments and scoring rubrics are scheduled for Tier 2. When the judging window opens, assigned submissions and rubric ballots will appear directly in this workspace.
+                <div class="meta-cell">
+                    <span class="label">Assigned Projects</span>
+                    <span class="value">{{len .JudgeAssignments}} projects</span>
                 </div>
+            </div>
+
+            <div class="card" style="background: var(--bg-warm-light); border-left: 4px solid var(--accent); padding: 1.25rem; margin-top: 1rem;">
+                <h4 style="margin-top: 0;">Evaluation &amp; Assignments</h4>
+                <p>You are authenticated as an official evaluator for <strong>{{.EventName}}</strong> under the Tier 2 judging lifecycle. Review assignments and scoring rubrics are managed with immutable versioning and strict peer isolation.</p>
                 <p class="text-muted" style="margin-bottom: 0;">Your peer scores remain strictly isolated in compliance with hackathon evaluation security policies.</p>
             </div>
+
+            <div style="margin-top: 1.5rem;">
+                <h4>Assigned Submissions ({{len .JudgeAssignments}})</h4>
+                <div style="overflow-x: auto;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Project Title</th>
+                                <th>Team</th>
+                                <th>Track</th>
+                                <th>Evaluation Status</th>
+                                <th>My Score</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .JudgeAssignments}}
+                            <tr>
+                                <td>
+                                    <strong>{{.ProjectTitle}}</strong>
+                                    <div style="font-size: 0.75rem; color: var(--text-muted);">ID: <code>{{.ProjectID}}</code></div>
+                                </td>
+                                <td>{{.TeamName}}</td>
+                                <td><span class="tag">{{.TrackName}}</span></td>
+                                <td>
+                                    {{if .IsSubmitted}}
+                                    <span class="status-badge status-open" style="font-size: 0.75rem;">Submitted &amp; Locked</span>
+                                    {{else if .LatestBallot}}
+                                    <span class="status-badge" style="background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border); font-size: 0.75rem;">Draft In Progress</span>
+                                    {{else}}
+                                    <span class="status-badge status-closed" style="font-size: 0.75rem;">Not Started</span>
+                                    {{end}}
+                                </td>
+                                <td>
+                                    {{if .IsSubmitted}}
+                                    <strong style="color: var(--success); font-size: 1.05rem;">{{printf "%.2f" .LatestBallot.WeightedScore}}</strong>
+                                    <small class="text-muted">/ 5.0</small>
+                                    {{else if .LatestBallot}}
+                                    <span style="color: var(--warning); font-size: 0.95rem;">{{printf "%.2f" .LatestBallot.WeightedScore}} (draft)</span>
+                                    {{else}}
+                                    <span class="text-muted">&mdash;</span>
+                                    {{end}}
+                                </td>
+                                <td>
+                                    {{if .IsSubmitted}}
+                                    <a href="/evaluations/{{.AssignmentID}}" class="btn-sm btn-outline">View My Score &rarr;</a>
+                                    {{else if .LatestBallot}}
+                                    <a href="/evaluations/{{.AssignmentID}}" class="btn-sm btn-primary">Continue Evaluation &rarr;</a>
+                                    {{else}}
+                                    <a href="/evaluations/{{.AssignmentID}}" class="btn-sm btn-primary">Start Evaluation &rarr;</a>
+                                    {{end}}
+                                </td>
+                            </tr>
+                            {{else}}
+                            <tr>
+                                <td colspan="6" class="text-muted" style="text-align: center; padding: 2rem;">
+                                    No submissions assigned to your profile yet for this event.
+                                </td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <p class="text-muted" style="margin-top: 1rem; font-size: 0.85rem;">
+                Peer isolation security policy: Your scores and feedback remain strictly private to your evaluator identity. Peer judges cannot view your evaluations.
+            </p>
         </section>
         {{end}}
 

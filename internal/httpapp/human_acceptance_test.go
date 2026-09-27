@@ -905,3 +905,196 @@ func TestHumanAcceptance_FlowF_RoleUI_Isolation(t *testing.T) {
 		}
 	})
 }
+
+func TestHumanAcceptance_FlowG_RubricAndBallotLifecycle(t *testing.T) {
+	db := setupSeededDB(t)
+	defer db.Close()
+
+	server, err := NewServer(Config{Port: 8080, DB: db})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	handler := server.Handler()
+
+	// 1. Organizer logs in and verifies published rubric
+	loginOrg := url.Values{"demo_user": {"organizer"}}.Encode()
+	reqLogO := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(loginOrg))
+	reqLogO.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrLogO := httptest.NewRecorder()
+	handler.ServeHTTP(rrLogO, reqLogO)
+	cookieOrg := rrLogO.Result().Cookies()[0]
+
+	reqRubric := httptest.NewRequest(http.MethodGet, "/api/events/evt_01/rubric", nil)
+	reqRubric.AddCookie(cookieOrg)
+	rrRubric := httptest.NewRecorder()
+	handler.ServeHTTP(rrRubric, reqRubric)
+	if rrRubric.Code != http.StatusOK {
+		t.Fatalf("expected published rubric 200, got %d: %s", rrRubric.Code, rrRubric.Body.String())
+	}
+
+	// 2. Judge A logs in and retrieves assigned projects from dashboard
+	loginJudgeA := url.Values{"demo_user": {"judge_a"}}.Encode()
+	reqLogJA := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(loginJudgeA))
+	reqLogJA.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrLogJA := httptest.NewRecorder()
+	handler.ServeHTTP(rrLogJA, reqLogJA)
+	cookieJA := rrLogJA.Result().Cookies()[0]
+
+	reqDashA := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+	reqDashA.AddCookie(cookieJA)
+	rrDashA := httptest.NewRecorder()
+	handler.ServeHTTP(rrDashA, reqDashA)
+	if rrDashA.Code != http.StatusOK {
+		t.Fatalf("judge A dashboard: expected 200, got %d", rrDashA.Code)
+	}
+
+	// Find an assignment ID for Judge A
+	var assignmentID string
+	err = db.QueryRowContext(context.Background(), "SELECT id FROM assignments WHERE judge_user_id = 'jdg_01' ORDER BY id ASC LIMIT 1;").Scan(&assignmentID)
+	if err != nil {
+		t.Fatalf("no assignment found for jdg_01: %v", err)
+	}
+
+	// 3. Judge A views evaluation page
+	reqEvalPage := httptest.NewRequest(http.MethodGet, "/evaluations/"+assignmentID, nil)
+	reqEvalPage.AddCookie(cookieJA)
+	rrEvalPage := httptest.NewRecorder()
+	handler.ServeHTTP(rrEvalPage, reqEvalPage)
+	if rrEvalPage.Code != http.StatusOK {
+		t.Fatalf("judge A viewing evaluation: expected 200, got %d", rrEvalPage.Code)
+	}
+	if !strings.Contains(rrEvalPage.Body.String(), "Evaluation Rubric") {
+		t.Errorf("evaluation page missing 'Evaluation Rubric'")
+	}
+
+	// 4. Judge A saves a draft ballot
+	draftForm := url.Values{
+		"action":                  {"draft"},
+		"criterion_functionality": {"4.0"},
+		"criterion_quality":       {"3.5"},
+		"criterion_innovation":    {"4.5"},
+		"criterion_impact":        {"3.0"},
+		"comment":                 {"Strong prototype with solid potential."},
+	}.Encode()
+	reqDraft := httptest.NewRequest(http.MethodPost, "/evaluations/"+assignmentID, strings.NewReader(draftForm))
+	reqDraft.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqDraft.AddCookie(cookieJA)
+	rrDraft := httptest.NewRecorder()
+	handler.ServeHTTP(rrDraft, reqDraft)
+	if rrDraft.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect on save draft, got %d", rrDraft.Code)
+	}
+
+	// Verify draft via API
+	reqBallotAPI := httptest.NewRequest(http.MethodGet, "/api/assignments/"+assignmentID+"/ballot", nil)
+	reqBallotAPI.AddCookie(cookieJA)
+	rrBallotAPI := httptest.NewRecorder()
+	handler.ServeHTTP(rrBallotAPI, reqBallotAPI)
+	if rrBallotAPI.Code != http.StatusOK {
+		t.Fatalf("expected 200 on get ballot API, got %d", rrBallotAPI.Code)
+	}
+	if !strings.Contains(rrBallotAPI.Body.String(), "DRAFT") {
+		t.Errorf("expected ballot to be in DRAFT state, got: %s", rrBallotAPI.Body.String())
+	}
+
+	// 5. Judge A submits the final ballot
+	submitForm := url.Values{
+		"action":                  {"submit"},
+		"criterion_functionality": {"4.5"},
+		"criterion_quality":       {"4.0"},
+		"criterion_innovation":    {"4.5"},
+		"criterion_impact":        {"4.0"},
+		"comment":                 {"Excellent submission, highly recommended."},
+	}.Encode()
+	reqSubmit := httptest.NewRequest(http.MethodPost, "/evaluations/"+assignmentID, strings.NewReader(submitForm))
+	reqSubmit.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqSubmit.AddCookie(cookieJA)
+	rrSubmit := httptest.NewRecorder()
+	handler.ServeHTTP(rrSubmit, reqSubmit)
+	if rrSubmit.Code != http.StatusSeeOther {
+		t.Fatalf("expected 303 redirect on submit, got %d", rrSubmit.Code)
+	}
+
+	// 6. Immutability verification: subsequent submit or draft via API must fail with 409
+	reqConflict := httptest.NewRequest(http.MethodPost, "/api/assignments/"+assignmentID+"/ballot/submit", strings.NewReader(`{"scores":{"functionality":5.0}}`))
+	reqConflict.Header.Set("Content-Type", "application/json")
+	reqConflict.AddCookie(cookieJA)
+	rrConflict := httptest.NewRecorder()
+	handler.ServeHTTP(rrConflict, reqConflict)
+	if rrConflict.Code != http.StatusConflict {
+		t.Errorf("expected 409 conflict when submitting locked ballot, got %d", rrConflict.Code)
+	}
+
+	// Check submitted evaluation page renders read-only immutable view
+	reqLockedPage := httptest.NewRequest(http.MethodGet, "/evaluations/"+assignmentID, nil)
+	reqLockedPage.AddCookie(cookieJA)
+	rrLockedPage := httptest.NewRecorder()
+	handler.ServeHTTP(rrLockedPage, reqLockedPage)
+	if rrLockedPage.Code != http.StatusOK {
+		t.Fatalf("expected 200 on viewing locked evaluation, got %d", rrLockedPage.Code)
+	}
+	lockedHTML := rrLockedPage.Body.String()
+	if !strings.Contains(lockedHTML, "Evaluation Submitted &amp; Immutable") {
+		t.Errorf("locked evaluation missing immutable banner")
+	}
+
+	// 7. Peer isolation verification: Judge B must be blocked from Judge A's assignment
+	loginJudgeB := url.Values{"demo_user": {"judge_b"}}.Encode()
+	reqLogJB := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(loginJudgeB))
+	reqLogJB.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrLogJB := httptest.NewRecorder()
+	handler.ServeHTTP(rrLogJB, reqLogJB)
+	cookieJB := rrLogJB.Result().Cookies()[0]
+
+	// Judge B tries to view Judge A's evaluation page -> 403
+	reqPeerEval := httptest.NewRequest(http.MethodGet, "/evaluations/"+assignmentID, nil)
+	reqPeerEval.AddCookie(cookieJB)
+	rrPeerEval := httptest.NewRecorder()
+	handler.ServeHTTP(rrPeerEval, reqPeerEval)
+	if rrPeerEval.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on peer evaluation page access, got %d", rrPeerEval.Code)
+	}
+
+	// Judge B tries to get Judge A's ballot API -> 403
+	reqPeerAPI := httptest.NewRequest(http.MethodGet, "/api/assignments/"+assignmentID+"/ballot", nil)
+	reqPeerAPI.AddCookie(cookieJB)
+	rrPeerAPI := httptest.NewRecorder()
+	handler.ServeHTTP(rrPeerAPI, reqPeerAPI)
+	if rrPeerAPI.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on peer ballot API, got %d", rrPeerAPI.Code)
+	}
+
+	// Judge B queries judge_scores for judge_a -> 403
+	reqPeerScores := httptest.NewRequest(http.MethodGet, "/api/judge/scores?judge=judge_a", nil)
+	reqPeerScores.AddCookie(cookieJB)
+	rrPeerScores := httptest.NewRecorder()
+	handler.ServeHTTP(rrPeerScores, reqPeerScores)
+	if rrPeerScores.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on peer judge scores, got %d", rrPeerScores.Code)
+	}
+
+	// 8. Participant blocked verification: Participant must be blocked from evaluation and judge scores
+	loginPart := url.Values{"demo_user": {"participant_a"}}.Encode()
+	reqLogP := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(loginPart))
+	reqLogP.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrLogP := httptest.NewRecorder()
+	handler.ServeHTTP(rrLogP, reqLogP)
+	cookieP := rrLogP.Result().Cookies()[0]
+
+	reqPartEval := httptest.NewRequest(http.MethodGet, "/evaluations/"+assignmentID, nil)
+	reqPartEval.AddCookie(cookieP)
+	rrPartEval := httptest.NewRecorder()
+	handler.ServeHTTP(rrPartEval, reqPartEval)
+	if rrPartEval.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on participant evaluation access, got %d", rrPartEval.Code)
+	}
+
+	reqPartScores := httptest.NewRequest(http.MethodGet, "/api/judge/scores", nil)
+	reqPartScores.AddCookie(cookieP)
+	rrPartScores := httptest.NewRecorder()
+	handler.ServeHTTP(rrPartScores, reqPartScores)
+	if rrPartScores.Code != http.StatusForbidden {
+		t.Errorf("expected 403 on participant judge scores access, got %d", rrPartScores.Code)
+	}
+}
+

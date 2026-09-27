@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evaluate: {{.Assignment.ProjectTitle}} — Dogfood 2026</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="container header-inner">
+            <div class="brand-group">
+                <a href="/projects" class="brand-title">Dogfood 2026</a>
+                <span class="event-name">{{if .EventName}}{{.EventName}}{{else}}Hackathon{{end}}</span>
+            </div>
+            <nav class="nav-links">
+                <a href="/projects" class="nav-link">Gallery</a>
+                {{if .User}}
+                <a href="/dashboard" class="nav-link">Dashboard</a>
+                <a href="/logout" class="nav-link nav-btn-outline">Sign Out</a>
+                {{else}}
+                <a href="/login" class="nav-link nav-btn">Sign In</a>
+                {{end}}
+            </nav>
+        </div>
+    </header>
+
+    <main class="container" style="max-width: 900px; padding: 2rem 1rem;">
+        <div class="back-nav" style="margin-bottom: 1.5rem;">
+            <a href="/dashboard" class="btn-sm btn-outline">&larr; Back to Judge Dashboard</a>
+        </div>
+
+        {{if .Message}}
+        <div class="alert alert-success" style="margin-bottom: 1.5rem;">{{.Message}}</div>
+        {{end}}
+        {{if .Error}}
+        <div class="alert alert-error" style="margin-bottom: 1.5rem;">{{.Error}}</div>
+        {{end}}
+
+        <!-- Project Overview Card -->
+        <article class="card" style="padding: 1.75rem; margin-bottom: 1.5rem; background: var(--bg-card); border-radius: var(--radius-md);">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap;">
+                <div>
+                    <span class="tag" style="margin-bottom: 0.5rem; display: inline-block;">{{.Assignment.TrackName}}</span>
+                    <h1 style="font-size: 1.75rem; font-weight: 700; margin: 0.25rem 0 0.5rem;">{{.Assignment.ProjectTitle}}</h1>
+                    <p class="subtitle" style="font-size: 0.95rem; color: var(--text-secondary); margin: 0;">Team: <strong>{{.Assignment.TeamName}}</strong> &bull; Assignment ID: <code>{{.Assignment.AssignmentID}}</code></p>
+                </div>
+                <div>
+                    {{if .IsSubmitted}}
+                    <span class="role-pill pill-judge" style="font-size: 0.85rem; padding: 0.35rem 0.85rem; background: var(--success-bg); color: var(--success); border: 1px solid var(--success-border);">✓ Ballot Finalized</span>
+                    {{else if .LatestBallot}}
+                    <span class="role-pill pill-organizer" style="font-size: 0.85rem; padding: 0.35rem 0.85rem; background: var(--warning-bg); color: var(--warning); border: 1px solid var(--warning-border);">Draft Saved (v{{.LatestBallot.VersionNo}})</span>
+                    {{else}}
+                    <span class="role-pill pill-participant" style="font-size: 0.85rem; padding: 0.35rem 0.85rem;">Not Started</span>
+                    {{end}}
+                </div>
+            </div>
+
+            <div style="margin-top: 1.25rem; padding-top: 1.25rem; border-top: 1px solid var(--border);">
+                <h4 style="font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.5rem;">Project Summary</h4>
+                <p style="color: var(--text); line-height: 1.6; margin: 0;">{{.Assignment.ProjectSummary}}</p>
+            </div>
+
+            <div style="display: flex; gap: 1rem; margin-top: 1.25rem; flex-wrap: wrap;">
+                {{if .Assignment.RepoURL}}
+                <a href="{{.Assignment.RepoURL}}" target="_blank" rel="noopener noreferrer" class="btn-sm btn-outline">View Repository ↗</a>
+                {{end}}
+                {{if .Assignment.DemoURL}}
+                <a href="{{.Assignment.DemoURL}}" target="_blank" rel="noopener noreferrer" class="btn-sm btn-outline">Live Demo ↗</a>
+                {{end}}
+                <a href="/projects/{{.Assignment.ProjectID}}" target="_blank" class="btn-sm btn-outline">Public Gallery Page ↗</a>
+            </div>
+        </article>
+
+        <!-- Evaluation Form or Submitted Summary -->
+        {{if .IsSubmitted}}
+        <div class="card" style="padding: 1.75rem; background: var(--bg-card); border-radius: var(--radius-md); border-top: 4px solid var(--success);">
+            <div class="alert alert-success" style="margin-bottom: 1.5rem;">
+                <strong>Evaluation Submitted &amp; Immutable:</strong> Your scores and comments have been recorded. In compliance with hackathon governance rules, submitted evaluations cannot be altered. Peer judges cannot see your scores.
+            </div>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem;">
+                <div class="meta-cell" style="background: var(--bg-warm-light); padding: 1rem; border-radius: var(--radius-sm); text-align: center;">
+                    <span class="label" style="font-size: 0.85rem;">Final Weighted Score</span>
+                    <span class="value" style="font-size: 2rem; font-weight: 700; color: var(--success); display: block; margin-top: 0.25rem;">{{printf "%.2f" .LatestBallot.WeightedScore}} <span style="font-size: 1rem; color: var(--text-muted);">/ 5.0</span></span>
+                </div>
+                <div class="meta-cell" style="background: var(--bg-warm-light); padding: 1rem; border-radius: var(--radius-sm); text-align: center;">
+                    <span class="label" style="font-size: 0.85rem;">Total Raw Score</span>
+                    <span class="value" style="font-size: 2rem; font-weight: 700; color: var(--text); display: block; margin-top: 0.25rem;">{{printf "%.1f" .LatestBallot.TotalScore}}</span>
+                </div>
+                <div class="meta-cell" style="background: var(--bg-warm-light); padding: 1rem; border-radius: var(--radius-sm); text-align: center;">
+                    <span class="label" style="font-size: 0.85rem;">Submitted At</span>
+                    <span class="value" style="font-size: 0.95rem; font-weight: 600; display: block; margin-top: 0.5rem;">{{.LatestBallot.CreatedAt}}</span>
+                </div>
+            </div>
+
+            <h3 style="font-size: 1.15rem; margin-bottom: 1rem;">Scored Criteria (Rubric v{{.Rubric.VersionNo}})</h3>
+            <div style="overflow-x: auto; margin-bottom: 1.5rem;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Criterion</th>
+                            <th>Description</th>
+                            <th>Weight</th>
+                            <th>Your Score</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Rubric.Criteria}}
+                        <tr>
+                            <td><strong>{{.Name}}</strong></td>
+                            <td style="max-width: 350px; font-size: 0.85rem; color: var(--text-secondary);">{{.Description}}</td>
+                            <td>{{.Weight}}x</td>
+                            <td>
+                                <span style="font-size: 1.1rem; font-weight: 700; color: var(--accent);">
+                                    {{scoreFor $.LatestBallot .ID}}
+                                </span>
+                                <small class="text-muted">/ {{.MaxScore}}</small>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+
+            {{if .LatestBallot.Comment}}
+            <div style="background: var(--bg-warm-light); padding: 1.25rem; border-radius: var(--radius-sm); border-left: 3px solid var(--accent);">
+                <h4 style="font-size: 0.95rem; margin-top: 0; margin-bottom: 0.5rem;">Evaluation Notes</h4>
+                <p style="margin: 0; white-space: pre-wrap; font-size: 0.95rem;">{{.LatestBallot.Comment}}</p>
+            </div>
+            {{end}}
+
+            <div style="margin-top: 1.5rem; text-align: right;">
+                <a href="/dashboard" class="btn-primary">Return to Judge Dashboard</a>
+            </div>
+        </div>
+
+        {{else}}
+        <!-- Scoring Form -->
+        <form action="/evaluations/{{.Assignment.AssignmentID}}" method="POST" id="ballot-form">
+            <div class="card" style="padding: 1.75rem; background: var(--bg-card); border-radius: var(--radius-md);">
+                <div style="display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1rem; border-bottom: 1px solid var(--border); padding-bottom: 0.75rem;">
+                    <div>
+                        <h3 style="font-size: 1.25rem; margin: 0;">Evaluation Rubric</h3>
+                        <small class="text-muted">Rubric Version: <code>v{{.Rubric.VersionNo}}</code> &bull; Config Hash: <code>{{.Rubric.ConfigurationHash}}</code></small>
+                    </div>
+                    <span class="tag">Scale: 0.0 &ndash; 5.0</span>
+                </div>
+
+                <p class="subtitle" style="margin-bottom: 1.5rem; font-size: 0.9rem;">
+                    Score each criterion from 0.0 (incomplete/poor) to 5.0 (exceptional). Saving a draft stores your progress. Submitting locks your scores permanently.
+                </p>
+
+                <!-- Criteria Scoring List -->
+                <div style="display: flex; flex-direction: column; gap: 1.5rem;">
+                    {{range .Rubric.Criteria}}
+                    {{$currScore := scoreFor $.LatestBallot .ID}}
+                    <div class="criterion-card" style="background: var(--bg-warm-light); padding: 1.25rem; border-radius: var(--radius-sm); border: 1px solid var(--border);">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; margin-bottom: 0.5rem;">
+                            <div>
+                                <h4 style="margin: 0; font-size: 1.05rem; font-weight: 700;">{{.Name}}</h4>
+                                <p style="margin: 0.25rem 0 0; font-size: 0.85rem; color: var(--text-secondary);">{{.Description}}</p>
+                            </div>
+                            <span class="tag" style="white-space: nowrap;">Weight: {{.Weight}}x</span>
+                        </div>
+
+                        <div style="display: flex; align-items: center; gap: 1rem; margin-top: 1rem; flex-wrap: wrap;">
+                            <label for="crit_{{.ID}}" style="font-size: 0.85rem; font-weight: 600; color: var(--text-label);">Score (0 - 5):</label>
+                            <input 
+                                type="number" 
+                                id="crit_{{.ID}}" 
+                                name="criterion_{{.ID}}" 
+                                class="score-input"
+                                data-weight="{{.Weight}}"
+                                min="{{.MinScore}}" 
+                                max="{{.MaxScore}}" 
+                                step="0.5" 
+                                value="{{if $currScore}}{{$currScore}}{{else}}0.0{{end}}" 
+                                required 
+                                style="width: 90px; padding: 0.4rem 0.6rem; font-size: 1.1rem; font-weight: 700; text-align: center; border-radius: var(--radius-xs); border: 1.5px solid var(--border-input);"
+                                oninput="recalculate()"
+                            >
+                            <div style="display: flex; gap: 0.35rem; flex-wrap: wrap;">
+                                <button type="button" class="btn-sm btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="setScore('crit_{{.ID}}', 1.0)">1</button>
+                                <button type="button" class="btn-sm btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="setScore('crit_{{.ID}}', 2.0)">2</button>
+                                <button type="button" class="btn-sm btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="setScore('crit_{{.ID}}', 3.0)">3</button>
+                                <button type="button" class="btn-sm btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="setScore('crit_{{.ID}}', 4.0)">4</button>
+                                <button type="button" class="btn-sm btn-outline" style="padding: 0.2rem 0.5rem; font-size: 0.75rem;" onclick="setScore('crit_{{.ID}}', 5.0)">5</button>
+                            </div>
+                        </div>
+                    </div>
+                    {{end}}
+                </div>
+
+                <!-- Live Score Preview Banner -->
+                <div style="margin-top: 1.75rem; padding: 1.25rem; background: var(--bg-warm); border-radius: var(--radius-sm); display: flex; justify-content: space-around; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                    <div style="text-align: center;">
+                        <span style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-weight: 600;">Calculated Weighted Score</span>
+                        <div style="font-size: 2rem; font-weight: 800; color: var(--accent); line-height: 1.2; margin-top: 0.2rem;">
+                            <span id="preview-weighted">0.00</span> <span style="font-size: 1rem; font-weight: 500; color: var(--text-muted);">/ 5.0</span>
+                        </div>
+                    </div>
+                    <div style="text-align: center;">
+                        <span style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-weight: 600;">Total Raw Sum</span>
+                        <div style="font-size: 1.5rem; font-weight: 700; color: var(--text); line-height: 1.2; margin-top: 0.2rem;">
+                            <span id="preview-total">0.0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Qualitative Notes -->
+                <div style="margin-top: 1.75rem;">
+                    <label for="eval_comment" style="font-weight: 600; display: block; margin-bottom: 0.5rem;">Qualitative Evaluation Notes &amp; Observations</label>
+                    <textarea 
+                        id="eval_comment" 
+                        name="comment" 
+                        rows="4" 
+                        placeholder="Provide constructive observations on system architecture, technical execution, innovation, and practical utility..." 
+                        style="width: 100%; padding: 0.75rem; border-radius: var(--radius-sm); border: 1.5px solid var(--border-input); font-family: var(--font); font-size: 0.95rem; background: var(--bg-card); color: var(--text);"
+                    >{{if .LatestBallot}}{{.LatestBallot.Comment}}{{end}}</textarea>
+                </div>
+
+                <!-- Form Submit Actions -->
+                <div style="margin-top: 2rem; padding-top: 1.25rem; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+                    <button type="submit" name="action" value="draft" class="btn-secondary" style="padding: 0.75rem 1.5rem;">
+                        Save Working Draft
+                    </button>
+                    <button 
+                        type="submit" 
+                        name="action" 
+                        value="submit" 
+                        class="btn-primary" 
+                        style="padding: 0.75rem 1.75rem;" 
+                        onclick="return confirm('Confirm Final Submission:\n\nSubmitting your evaluation will finalize and permanently lock your score. It cannot be altered after submission.\n\nProceed?');"
+                    >
+                        Submit Final Evaluation &rarr;
+                    </button>
+                </div>
+            </div>
+        </form>
+        {{end}}
+    </main>
+
+    <script>
+        function setScore(id, val) {
+            const input = document.getElementById(id);
+            if (input) {
+                input.value = val.toFixed(1);
+                recalculate();
+            }
+        }
+
+        function recalculate() {
+            const inputs = document.querySelectorAll('.score-input');
+            let totalSum = 0;
+            let weightedSum = 0;
+            let weightSum = 0;
+
+            inputs.forEach(input => {
+                const val = parseFloat(input.value) || 0;
+                const weight = parseFloat(input.dataset.weight) || 1.0;
+                totalSum += val;
+                weightedSum += val * weight;
+                weightSum += weight;
+            });
+
+            const weightedScore = weightSum > 0 ? (weightedSum / weightSum) : 0;
+
+            const wEl = document.getElementById('preview-weighted');
+            const tEl = document.getElementById('preview-total');
+            if (wEl) wEl.textContent = weightedScore.toFixed(2);
+            if (tEl) tEl.textContent = totalSum.toFixed(1);
+        }
+
+        document.addEventListener('DOMContentLoaded', recalculate);
+    </script>
+</body>
+</html>
