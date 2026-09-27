@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Join Team — {{if .EventName}}{{.EventName}}{{else}}Dogfood 2026{{end}}</title>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="container header-inner">
+            <div class="brand-group">
+                <a href="/projects" class="brand-title">Dogfood 2026</a>
+                <span class="event-name">{{if .EventName}}{{.EventName}}{{else}}Hackathon{{end}}</span>
+            </div>
+            <nav class="nav-links">
+                <a href="/projects" class="nav-link">Gallery</a>
+                {{if .User}}
+                <a href="/dashboard" class="nav-link">Dashboard ({{.User.DisplayName}})</a>
+                <a href="/logout" class="nav-link nav-btn-outline">Sign Out</a>
+                {{else}}
+                <a href="/login?return_to=/teams/join?token={{.Token}}" class="nav-link nav-btn">Sign In</a>
+                {{end}}
+            </nav>
+        </div>
+    </header>
+
+    <main class="container form-container">
+        <div class="card auth-card">
+            {{if .Error}}
+            <div class="join-header">
+                <h2>Invitation Unavailable</h2>
+                <div class="alert alert-error" style="margin-top: 1rem;">{{.Error}}</div>
+            </div>
+            <div style="margin-top: 1.5rem; text-align: center;">
+                <a href="/dashboard" class="btn-outline">Go to Dashboard</a>
+                <a href="/projects" class="btn-secondary" style="margin-left: 0.5rem;">Browse Gallery</a>
+            </div>
+            {{else}}
+            <div class="join-header">
+                <span class="role-pill pill-participant" style="margin-bottom: 0.75rem; display: inline-block;">Team Invitation</span>
+                <h2>Join <strong>{{.TeamName}}</strong></h2>
+                <p class="subtitle">You have been invited{{if .CreatorName}} by <strong>{{.CreatorName}}</strong>{{end}} to join their hackathon team.</p>
+            </div>
+
+            <div class="meta-banner" style="margin: 1.5rem 0;">
+                <div class="meta-cell">
+                    <span class="label">Team</span>
+                    <span class="value">{{.TeamName}}</span>
+                </div>
+                <div class="meta-cell">
+                    <span class="label">Capacity</span>
+                    <span class="value">{{.MemberCount}} of 4 members</span>
+                </div>
+                <div class="meta-cell">
+                    <span class="label">Expires</span>
+                    <span class="value">{{if .FormattedExpiry}}{{.FormattedExpiry}}{{else}}In 7 days{{end}}</span>
+                </div>
+            </div>
+
+            {{if .User}}
+            <form action="/teams/join" method="POST">
+                <input type="hidden" name="token" value="{{.Token}}">
+                <div class="form-actions" style="display: flex; gap: 1rem; justify-content: center; margin-top: 1.5rem;">
+                    <button type="submit" class="btn-primary" style="padding: 0.75rem 2rem; font-size: 1rem;">Accept Invitation &amp; Join Team</button>
+                    <a href="/dashboard" class="btn-outline" style="padding: 0.75rem 1.5rem;">Decline</a>
+                </div>
+            </form>
+            {{else}}
+            <div class="alert alert-warning" style="margin-top: 1rem;">
+                <strong>Authentication Required:</strong> Please sign in to accept this invitation and join the team.
+            </div>
+            <div style="margin-top: 1.5rem; text-align: center;">
+                <a href="/login?return_to=/teams/join?token={{.Token}}" class="btn-primary btn-block" style="text-align: center;">Sign In to Accept Invitation</a>
+            </div>
+            {{end}}
+            {{end}}
+        </div>
+    </main>
+</body>
+</html>

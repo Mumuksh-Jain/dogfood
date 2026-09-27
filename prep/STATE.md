@@ -1,10 +1,10 @@
 # STATE
 
 ## Current phase
-T1 CLOSURE COMPLETE (Ready for human commit)
+T1 PRODUCT: COMPLETE / FROZEN
 
 ## Last checkpoint passed
-T1 Closure Patch: Admin Role Authorization, Event Lifecycle Windows & Validation, Tracks & Prizes Configuration (Migration 0010), Invite-Link Flow with Capacity Guard, and Full Draft-to-Submit Lifecycle Integration
+T1 Human Product Closure: Authentication architecture separation (protected acceptance tokens vs dynamic human sessions), 1-click Demo Personas, Complete Browser Team Lifecycle with dedicated confirmation page and capacity guards, Participant Project Workspace, Organizer Management Workspace, Judge Role Surface, and automated human acceptance test suite (Flows A–E).
 
 ## Current blocker
 none
@@ -20,7 +20,7 @@ T2  csv export works .................. PASS
 claimed T1 T2, verified T1 T2
 
 ## Next action
-Human reviews and commits T1 Closure Patch, then proceed to T2 Judging Schema (Migration 0020).
+Human reviews and commits T1 Product Closure checkpoint. Tier 1 is fully frozen and demonstrable. Ready for Tier 2 Judging Schema (Migration 0020).
 
 ## Known deltas since H0
 None.

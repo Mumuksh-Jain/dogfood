@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard — Dogfood 2026</title>
+    <title>Dashboard — {{if .EventName}}{{.EventName}}{{else}}Dogfood 2026{{end}}</title>
     <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -21,23 +21,56 @@
             <nav class="nav-links">
                 <a href="/projects" class="nav-link">Gallery</a>
                 <a href="/dashboard" class="nav-link active">Dashboard</a>
+                {{if or .IsOrganizer .IsAdmin}}
+                <a href="#event" class="nav-link">Event</a>
+                <a href="#tracks-prizes" class="nav-link">Tracks &amp; Prizes</a>
+                <a href="#all-teams" class="nav-link">Teams</a>
+                <a href="#all-projects" class="nav-link">Projects</a>
+                {{end}}
+                {{if .IsJudge}}
+                <a href="#judge-workspace" class="nav-link">Judge</a>
+                {{end}}
+                {{if .IsParticipant}}
+                <a href="#my-team" class="nav-link">My Team</a>
+                <a href="#my-project" class="nav-link">My Project</a>
+                {{end}}
                 <a href="/logout" class="nav-link nav-btn-outline">Sign Out</a>
             </nav>
         </div>
     </header>
 
     <main class="container">
-        <!-- User Identity Header -->
+        <!-- User Profile Card -->
         <section class="card user-profile-card">
             <div class="profile-header">
                 <div>
                     <h2>{{.User.DisplayName}}</h2>
-                    <p class="subtitle">{{.User.Email}} (ID: <code>{{.User.UserID}}</code>)</p>
+                    <p class="subtitle">{{.User.Email}} &bull; ID: <code>{{.User.UserID}}</code></p>
                 </div>
                 <div class="role-badges">
                     {{range $role, $active := .User.Roles}}
                     {{if $active}}<span class="role-pill pill-{{$role}}">{{$role}}</span>{{end}}
                     {{end}}
+                </div>
+            </div>
+            <div class="meta-banner">
+                <div class="meta-cell">
+                    <span class="label">Event</span>
+                    <span class="value">{{.EventName}}</span>
+                </div>
+                <div class="meta-cell">
+                    <span class="label">Submissions Status</span>
+                    <span class="value">
+                        {{if .SubmissionsOpen}}
+                        <span class="text-success font-semibold">Open</span>
+                        {{else}}
+                        <span class="text-danger font-semibold">Closed</span>
+                        {{end}}
+                    </span>
+                </div>
+                <div class="meta-cell">
+                    <span class="label">Deadline</span>
+                    <span class="value">{{if .FormattedDeadline}}{{.FormattedDeadline}}{{else if .SubmissionsCloseAt}}{{.SubmissionsCloseAt}}{{else}}Rolling{{end}}</span>
                 </div>
             </div>
         </section>
@@ -49,68 +82,102 @@
         <div class="alert alert-error">{{.Error}}</div>
         {{end}}
 
-        <!-- ORGANIZER / ADMIN SECTION -->
+        <!-- ============================================================= -->
+        <!-- ORGANIZER & ADMIN WORKSPACE                                  -->
+        <!-- ============================================================= -->
         {{if or .IsOrganizer .IsAdmin}}
-        <section class="card section-card">
+        <section class="card section-card" id="organizer-workspace">
             <div class="section-header">
-                <h3>Admin &amp; Organizer Controls</h3>
-                <a href="/api/export.csv" class="btn-sm btn-primary">Download Results CSV ↗</a>
+                <div>
+                    <h3>Organizer Workspace</h3>
+                    <p class="subtitle">Event operations, track/prize configuration, and submission audits.</p>
+                </div>
+                <a href="/api/export.csv" class="btn-primary btn-sm">Download Results CSV ↗</a>
             </div>
-            
-            <h4>Event Lifecycle Windows</h4>
-            <form action="/api/organizer/event" method="POST" class="grid-form">
-                <div class="form-group">
-                    <label for="event_name">Event Name</label>
-                    <input type="text" id="event_name" name="name" value="{{.EventName}}" required>
-                </div>
-                <div class="form-group">
-                    <label for="close_at">Submissions Close At (UTC RFC3339)</label>
-                    <input type="text" id="close_at" name="submissions_close_at" value="{{.SubmissionsCloseAt}}" placeholder="2026-03-01T18:00:00Z" required>
-                </div>
-                <div class="form-actions">
-                    <button type="submit" class="btn-primary">Update Event Windows</button>
-                </div>
-            </form>
+
+            <!-- Event Lifecycle Windows -->
+            <div id="event" style="margin-top: 1.5rem;">
+                <h4>Event Lifecycle Windows</h4>
+                <form action="/api/organizer/event" method="POST" class="grid-form">
+                    <div class="form-group">
+                        <label for="event_name">Event Name</label>
+                        <input type="text" id="event_name" name="name" value="{{.EventName}}" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg_open">Registration Opens (UTC RFC3339)</label>
+                        <input type="text" id="reg_open" name="registration_opens_at" placeholder="2026-02-01T00:00:00Z">
+                    </div>
+                    <div class="form-group">
+                        <label for="reg_close">Registration Closes (UTC RFC3339)</label>
+                        <input type="text" id="reg_close" name="registration_closes_at" placeholder="2026-03-01T18:00:00Z">
+                    </div>
+                    <div class="form-group">
+                        <label for="sub_open">Submissions Open (UTC RFC3339)</label>
+                        <input type="text" id="sub_open" name="submissions_open_at" placeholder="2026-02-01T00:00:00Z">
+                    </div>
+                    <div class="form-group">
+                        <label for="sub_close">Submissions Close (UTC RFC3339)</label>
+                        <input type="text" id="sub_close" name="submissions_close_at" value="{{.SubmissionsCloseAt}}" placeholder="2026-03-01T18:00:00Z" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="jdg_open">Judging Opens (UTC RFC3339)</label>
+                        <input type="text" id="jdg_open" name="judging_opens_at" placeholder="2026-03-01T18:00:00Z">
+                    </div>
+                    <div class="form-group">
+                        <label for="jdg_close">Judging Closes (UTC RFC3339)</label>
+                        <input type="text" id="jdg_close" name="judging_closes_at" placeholder="2026-03-03T18:00:00Z">
+                    </div>
+                    <div class="form-actions full-width">
+                        <button type="submit" class="btn-primary">Update Event Windows</button>
+                    </div>
+                </form>
+            </div>
 
             <hr class="divider">
 
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-top: 1rem;">
-                <!-- Tracks Configuration -->
-                <div class="card" style="background: rgba(255,255,255,0.02);">
-                    <h4>Tracks Management</h4>
-                    <form action="/api/organizer/tracks" method="POST" style="margin-bottom: 1rem;">
+            <!-- Tracks & Prizes Configuration -->
+            <div id="tracks-prizes" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem;">
+                <!-- Tracks -->
+                <div class="card" style="background: var(--bg-warm-light);">
+                    <h4>Tracks ({{len .Tracks}})</h4>
+                    <form action="/api/organizer/tracks" method="POST" style="margin-bottom: 1.25rem;">
                         <div class="form-group">
-                            <label for="track_name">Track Name</label>
-                            <input type="text" id="track_name" name="name" placeholder="e.g. AI / ML" required>
+                            <label for="track_name">New Track Name</label>
+                            <input type="text" id="track_name" name="name" placeholder="e.g. Artificial Intelligence" required>
                         </div>
-                        <button type="submit" class="btn-sm btn-outline">+ Create Track</button>
+                        <button type="submit" class="btn-sm btn-outline">+ Add Track</button>
                     </form>
-                    <h5>Configured Tracks</h5>
-                    <ul style="padding-left: 1.25rem;">
+                    <ul class="clean-list">
                         {{range .Tracks}}
-                        <li><strong>{{.Name}}</strong> (ID: <code>{{.ID}}</code>, Projects: {{.Count}})</li>
+                        <li>
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <strong>{{.Name}}</strong>
+                                <span class="tag">{{.Count}} projects</span>
+                            </div>
+                            <small class="text-muted">ID: <code>{{.ID}}</code></small>
+                        </li>
                         {{end}}
                     </ul>
                 </div>
 
-                <!-- Prizes Configuration -->
-                <div class="card" style="background: rgba(255,255,255,0.02);">
-                    <h4>Prizes Management</h4>
-                    <form action="/api/organizer/prizes" method="POST" style="margin-bottom: 1rem;">
+                <!-- Prizes -->
+                <div class="card" style="background: var(--bg-warm-light);">
+                    <h4>Prizes ({{len .Prizes}})</h4>
+                    <form action="/api/organizer/prizes" method="POST" style="margin-bottom: 1.25rem;">
                         <div class="form-group">
                             <label for="prize_name">Prize Name</label>
-                            <input type="text" id="prize_name" name="name" placeholder="e.g. First Place" required>
+                            <input type="text" id="prize_name" name="name" placeholder="e.g. Grand Prize" required>
                         </div>
                         <div class="form-group">
-                            <label for="prize_amount">Amount / Reward</label>
+                            <label for="prize_amount">Amount / Value</label>
                             <input type="text" id="prize_amount" name="amount_text" placeholder="e.g. $10,000">
                         </div>
                         <div class="form-group">
                             <label for="prize_desc">Description</label>
-                            <input type="text" id="prize_desc" name="description" placeholder="Best overall hack">
+                            <input type="text" id="prize_desc" name="description" placeholder="Best overall technical execution">
                         </div>
                         <div class="form-group">
-                            <label for="prize_track">Track (Optional)</label>
+                            <label for="prize_track">Track Association (Optional)</label>
                             <select id="prize_track" name="track_id">
                                 <option value="">All Tracks</option>
                                 {{range .Tracks}}
@@ -118,189 +185,411 @@
                                 {{end}}
                             </select>
                         </div>
-                        <button type="submit" class="btn-sm btn-outline">+ Create Prize</button>
+                        <button type="submit" class="btn-sm btn-outline">+ Add Prize</button>
                     </form>
-                    <h5>Configured Prizes</h5>
-                    <ul style="padding-left: 1.25rem;">
+                    <ul class="clean-list">
                         {{range .Prizes}}
-                        <li><strong>{{.Name}}</strong> — {{.AmountText}} (Track: {{.TrackName}})</li>
+                        <li>
+                            <div style="display:flex; justify-content:space-between; align-items:baseline;">
+                                <strong>{{.Name}}</strong>
+                                {{if .AmountText}}<span style="color: var(--success); font-weight: 600;">{{.AmountText}}</span>{{end}}
+                            </div>
+                            {{if .Description}}<p style="margin: 0.2rem 0; font-size: 0.85rem; color: var(--text-muted);">{{.Description}}</p>{{end}}
+                            <small class="tag" style="font-size: 0.75rem;">{{.TrackName}}</small>
+                        </li>
                         {{else}}
                         <li class="text-muted">No prizes configured yet.</li>
                         {{end}}
                     </ul>
                 </div>
             </div>
+
+            <hr class="divider">
+
+            <!-- All Teams Overview -->
+            <div id="all-teams" style="margin-top: 1rem;">
+                <h4>All Teams ({{len .AllTeams}})</h4>
+                <div style="overflow-x: auto;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Team ID</th>
+                                <th>Team Name</th>
+                                <th>Members</th>
+                                <th>Team Lead</th>
+                                <th>Registered</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .AllTeams}}
+                            <tr>
+                                <td><code>{{.ID}}</code></td>
+                                <td><strong>{{.Name}}</strong></td>
+                                <td><span class="tag">{{.MemberCount}} / 4</span></td>
+                                <td>{{.LeadName}}</td>
+                                <td><small class="text-muted">{{.CreatedAt}}</small></td>
+                            </tr>
+                            {{else}}
+                            <tr>
+                                <td colspan="5" class="text-muted">No teams registered yet.</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <hr class="divider">
+
+            <!-- All Projects Overview -->
+            <div id="all-projects" style="margin-top: 1rem;">
+                <h4>All Projects ({{len .AllProjects}})</h4>
+                <div style="overflow-x: auto;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Project ID</th>
+                                <th>Title</th>
+                                <th>Team</th>
+                                <th>Track</th>
+                                <th>Status</th>
+                                <th>Version</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .AllProjects}}
+                            <tr>
+                                <td><code>{{.ID}}</code></td>
+                                <td><strong><a href="/projects/{{.ID}}">{{.Title}}</a></strong></td>
+                                <td><code>{{.TeamID}}</code></td>
+                                <td>{{.TrackName}}</td>
+                                <td>
+                                    <span class="status-badge {{if eq .State "SUBMITTED"}}status-open{{else}}status-closed{{end}}">
+                                        {{.State}}
+                                    </span>
+                                </td>
+                                <td>v{{.VersionNo}}</td>
+                                <td><a href="/projects/{{.ID}}" class="btn-sm btn-outline">View ↗</a></td>
+                            </tr>
+                            {{else}}
+                            <tr>
+                                <td colspan="7" class="text-muted">No projects created yet.</td>
+                            </tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </section>
         {{end}}
 
-        <!-- JUDGE SECTION -->
+        <!-- ============================================================= -->
+        <!-- JUDGE WORKSPACE                                              -->
+        <!-- ============================================================= -->
         {{if .IsJudge}}
-        <section class="card section-card">
+        <section class="card section-card" id="judge-workspace">
             <div class="section-header">
                 <h3>Judge Workspace</h3>
-                <a href="/api/judge/scores" class="btn-sm btn-outline">View My Private Scores (JSON) ↗</a>
+                <span class="role-pill pill-judge">Judge</span>
             </div>
-            <p>You are registered as an official evaluator. Your private scores are cryptographically isolated from peer judges.</p>
+            <div class="meta-banner" style="margin-top: 1rem;">
+                <div class="meta-cell">
+                    <span class="label">Judge Name</span>
+                    <span class="value">{{.User.DisplayName}}</span>
+                </div>
+                <div class="meta-cell">
+                    <span class="label">Judge Email</span>
+                    <span class="value">{{.User.Email}}</span>
+                </div>
+                <div class="meta-cell">
+                    <span class="label">Active Event</span>
+                    <span class="value">{{.EventName}}</span>
+                </div>
+            </div>
+            <div class="card" style="background: var(--bg-warm-light); border-left: 4px solid var(--accent); padding: 1.25rem;">
+                <h4 style="margin-top: 0;">Evaluation &amp; Assignments</h4>
+                <p>You are authenticated as an official evaluator for <strong>{{.EventName}}</strong>.</p>
+                <div class="alert alert-warning" style="margin: 1rem 0;">
+                    <strong>Assignments Not Yet Configured:</strong> Review assignments and scoring rubrics are scheduled for Tier 2. When the judging window opens, assigned submissions and rubric ballots will appear directly in this workspace.
+                </div>
+                <p class="text-muted" style="margin-bottom: 0;">Your peer scores remain strictly isolated in compliance with hackathon evaluation security policies.</p>
+            </div>
         </section>
         {{end}}
 
-        <!-- PARTICIPANT SECTION -->
-        <section class="card section-card">
-            <h3>Participant Workspace</h3>
+        <!-- ============================================================= -->
+        <!-- PARTICIPANT WORKSPACE                                        -->
+        <!-- ============================================================= -->
+        {{if .IsParticipant}}
+        <section class="card section-card" id="participant-workspace">
+            <div class="section-header">
+                <h3>Participant Workspace</h3>
+                <span class="role-pill pill-participant">Participant</span>
+            </div>
 
-            {{if .Team}}
-            <div class="team-panel">
-                <div class="team-header">
-                    <div>
-                        <h4>Team: <strong>{{.Team.Name}}</strong> (ID: <code>{{.Team.ID}}</code>)</h4>
-                        <p class="subtitle">{{len .TeamMembers}} of 4 members</p>
+            <!-- 1. MY TEAM SECTION -->
+            <div id="my-team" style="margin-top: 1.5rem;">
+                {{if .Team}}
+                <div class="team-panel">
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;">
+                        <div>
+                            <h4>My Team: <strong>{{.Team.Name}}</strong></h4>
+                            <p class="subtitle">ID: <code>{{.Team.ID}}</code> &bull; {{len .TeamMembers}} of 4 members</p>
+                        </div>
+                        <div>
+                            {{if lt (len .TeamMembers) 4}}
+                            <form action="/api/teams/{{.Team.ID}}/invites" method="POST" style="display:inline;">
+                                <button type="submit" class="btn-sm btn-outline">+ Generate Invite Link</button>
+                            </form>
+                            {{else}}
+                            <span class="badge-full">Team Full (Capacity 4/4)</span>
+                            {{end}}
+                        </div>
                     </div>
-                    {{if lt (len .TeamMembers) 4}}
-                    <form action="/api/teams/{{.Team.ID}}/invites" method="POST" style="display:inline;">
-                        <button type="submit" class="btn-sm btn-outline">+ Generate Join Invite</button>
-                    </form>
-                    {{else}}
-                    <span class="badge-full">Team Full (Capacity 4/4)</span>
+
+                    {{if .CurrentInviteURL}}
+                    <div class="card" style="background: var(--accent-light); border: 1.5px solid var(--accent); margin: 1rem 0; padding: 1.25rem; border-radius: var(--radius-md);">
+                        <h5 style="margin-top: 0; color: var(--accent); font-weight: 700;">Copyable Team Invite Link</h5>
+                        <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">Share this link with a teammate so they can join your team. Valid for 7 days.</p>
+                        <div class="invite-box">
+                            <input type="text" id="invite-url-field" class="invite-input" value="{{.CurrentInviteURL}}" readonly>
+                            <button type="button" class="btn-sm btn-primary" onclick="copyInviteURL()">Copy Link</button>
+                        </div>
+                    </div>
+                    {{end}}
+
+                    <!-- Member list -->
+                    <div style="margin-top: 1.25rem;">
+                        <h5>Team Members</h5>
+                        <div style="overflow-x: auto;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Name</th>
+                                        <th>Email</th>
+                                        <th>Role</th>
+                                        <th>Joined</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {{range .TeamMembers}}
+                                    <tr>
+                                        <td><strong>{{.DisplayName}}</strong></td>
+                                        <td>{{.Email}}</td>
+                                        <td>
+                                            {{if or (eq .Role "leader") (eq .Role "lead")}}
+                                            <span class="role-pill pill-organizer" style="font-size: 0.7rem;">Team Lead</span>
+                                            {{else}}
+                                            <span class="role-pill pill-participant" style="font-size: 0.7rem;">Member</span>
+                                            {{end}}
+                                        </td>
+                                        <td><small class="text-muted">{{.JoinedAt}}</small></td>
+                                    </tr>
+                                    {{end}}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Invites List -->
+                    {{if .TeamInvites}}
+                    <div style="margin-top: 1.5rem;">
+                        <h5>Invitations History</h5>
+                        <ul class="clean-list">
+                            {{range .TeamInvites}}
+                            <li>
+                                <code>{{.ID}}</code> &bull;
+                                {{if .RevokedAt}}<span class="text-danger">Revoked</span>
+                                {{else if .AcceptedAt}}<span class="text-success">Accepted by {{.AcceptedBy}}</span>
+                                {{else}}<span class="text-warning">Pending (Expires {{.ExpiresAt}})</span>{{end}}
+                            </li>
+                            {{end}}
+                        </ul>
+                    </div>
                     {{end}}
                 </div>
-
-                <!-- Active Members -->
-                <div class="member-list">
-                    <h5>Members</h5>
-                    <ul>
-                        {{range .TeamMembers}}
-                        <li>
-                            <strong>{{.DisplayName}}</strong> &lt;{{.Email}}&gt;
-                            <span class="tag">{{.Role}}</span>
-                        </li>
-                        {{end}}
-                    </ul>
-                </div>
-
-                <!-- Invites -->
-                {{if .TeamInvites}}
-                <div class="invite-list">
-                    <h5>Active & Recent Invites</h5>
-                    <ul>
-                        {{range .TeamInvites}}
-                        <li>
-                            Invite <code>{{.ID}}</code> —
-                            {{if .RevokedAt}}<span class="text-danger">Revoked</span>
-                            {{else if .AcceptedAt}}<span class="text-success">Accepted by {{.AcceptedBy}}</span>
-                            {{else}}<span class="text-warning">Pending (Expires {{.ExpiresAt}})</span> — Token: <code>{{.TokenHash}}</code>{{end}}
-                        </li>
-                        {{end}}
-                    </ul>
+                {{else}}
+                <!-- No team yet -->
+                <div class="card" style="background: var(--bg-warm-light); padding: 1.5rem;">
+                    <h4>My Team</h4>
+                    <p class="subtitle">To submit a hackathon project, you must first create a team or join an existing one.</p>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-top: 1.5rem;">
+                        <!-- Create Team -->
+                        <div class="card setup-box">
+                            <h5>Create a New Team</h5>
+                            <p class="subtitle">You will become the team lead and can invite up to 3 teammates.</p>
+                            <form action="/api/teams" method="POST">
+                                <div class="form-group">
+                                    <label for="team_name">Team Name</label>
+                                    <input type="text" id="team_name" name="name" placeholder="e.g. SolarFlare" required>
+                                </div>
+                                <button type="submit" class="btn-primary">Create Team</button>
+                            </form>
+                        </div>
+                        <!-- Join Team -->
+                        <div class="card setup-box">
+                            <h5>Join Existing Team</h5>
+                            <p class="subtitle">Received an invite link or token? Paste the token below.</p>
+                            <form action="/teams/join" method="POST">
+                                <div class="form-group">
+                                    <label for="join_token">Invite Token</label>
+                                    <input type="text" id="join_token" name="token" placeholder="Paste token here" required>
+                                </div>
+                                <button type="submit" class="btn-outline">Join Team</button>
+                            </form>
+                        </div>
+                    </div>
                 </div>
                 {{end}}
+            </div>
 
-                <hr class="divider">
+            <hr class="divider">
 
-                <!-- Team Projects -->
-                <div class="projects-section">
-                    <div class="section-header">
-                        <h4>Team Projects</h4>
-                    </div>
-
-                    {{if .TeamProjects}}
-                    <div class="team-project-list">
-                        {{range .TeamProjects}}
-                        <div class="project-entry card">
-                            <div class="entry-header">
-                                <h5><a href="/projects/{{.ID}}">{{.Title}}</a></h5>
+            <!-- 2. MY PROJECT SECTION -->
+            <div id="my-project" style="margin-top: 1.5rem;">
+                <h4>My Project</h4>
+                {{if not .Team}}
+                <p class="text-muted">Create or join a team above to start drafting a project submission.</p>
+                {{else if .TeamProjects}}
+                <div class="team-project-list">
+                    {{range .TeamProjects}}
+                    <div class="project-entry card" style="background: #fff; margin-bottom: 1.5rem; padding: 1.5rem;">
+                        <div class="entry-header" style="display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap;">
+                            <h4 style="margin: 0;"><a href="/projects/{{.ID}}">{{.Title}}</a></h4>
+                            <div>
                                 <span class="tag">{{.TrackName}}</span>
-                                <span class="status-badge {{if eq .State "SUBMITTED"}}status-open{{else}}status-closed{{end}}">{{.State}}</span>
+                                <span class="status-badge {{if eq .State "SUBMITTED"}}status-open{{else}}status-closed{{end}}">
+                                    {{.State}}
+                                </span>
                             </div>
-                            <p>{{.Summary}}</p>
-                            {{if .RepoURL}}<p>Repo: <a href="{{.RepoURL}}" target="_blank" rel="noopener noreferrer">{{.RepoURL}}</a></p>{{end}}
+                        </div>
+                        <p style="margin: 0.75rem 0;">{{.Summary}}</p>
+                        <div class="project-meta" style="font-size: 0.85rem; color: var(--text-muted); display: flex; gap: 1rem; flex-wrap: wrap;">
+                            {{if .RepoURL}}<span>Repo: <a href="{{.RepoURL}}" target="_blank" rel="noopener noreferrer">{{.RepoURL}} ↗</a></span>{{end}}
+                            {{if .DemoURL}}<span>Demo: <a href="{{.DemoURL}}" target="_blank" rel="noopener noreferrer">{{.DemoURL}} ↗</a></span>{{end}}
+                            <span>Version: <strong>v{{.VersionNo}}</strong></span>
+                            {{if .FormattedDate}}<span>Updated: {{.FormattedDate}}</span>{{end}}
+                        </div>
 
-                            <div class="entry-actions">
-                                <a href="/projects/{{.ID}}" class="btn-sm btn-secondary">View Page</a>
-                                {{if and (eq .State "DRAFT") $.SubmissionsOpen}}
-                                <form action="/api/projects/{{.ID}}/submit" method="POST" style="display:inline;">
-                                    <button type="submit" class="btn-sm btn-primary">Submit to Hackathon</button>
-                                </form>
-                                {{end}}
-                            </div>
+                        {{if eq .State "DRAFT"}}
+                        <div class="alert alert-warning" style="margin: 1rem 0;">
+                            <strong>Private Draft:</strong> This submission is in draft state. It is hidden from the public gallery and judges until submitted.
+                        </div>
+
+                        <!-- Edit Draft Form -->
+                        <details style="margin: 1rem 0; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem;">
+                            <summary style="cursor: pointer; font-weight: 600; color: var(--text-bright);">Edit Project Draft Details</summary>
+                            <form action="/api/projects/{{.ID}}/edit" method="POST" class="grid-form" style="margin-top: 1rem;">
+                                <div class="form-group full-width">
+                                    <label for="edit_title_{{.ID}}">Project Title</label>
+                                    <input type="text" id="edit_title_{{.ID}}" name="title" value="{{.Title}}" required>
+                                </div>
+                                <div class="form-group full-width">
+                                    <label for="edit_summary_{{.ID}}">Summary</label>
+                                    <textarea id="edit_summary_{{.ID}}" name="summary" rows="2" required>{{.Summary}}</textarea>
+                                </div>
+                                <div class="form-group">
+                                    <label for="edit_repo_{{.ID}}">Repository URL</label>
+                                    <input type="url" id="edit_repo_{{.ID}}" name="repo_url" value="{{.RepoURL}}" required>
+                                </div>
+                                <div class="form-group">
+                                    <label for="edit_demo_{{.ID}}">Demo URL</label>
+                                    <input type="url" id="edit_demo_{{.ID}}" name="demo_url" value="{{.DemoURL}}">
+                                </div>
+                                <div class="form-actions full-width">
+                                    <button type="submit" class="btn-secondary">Save Draft Changes</button>
+                                </div>
+                            </form>
+                        </details>
+
+                        <div class="entry-actions" style="display: flex; gap: 0.75rem; align-items: center; margin-top: 1rem;">
+                            <a href="/projects/{{.ID}}" class="btn-sm btn-outline">Preview Draft Page ↗</a>
+                            {{if $.SubmissionsOpen}}
+                            <form action="/api/projects/{{.ID}}/submit" method="POST" style="display:inline;">
+                                <button type="submit" class="btn-sm btn-primary">Submit to Hackathon</button>
+                            </form>
+                            {{else}}
+                            <span class="badge-full">Submissions Closed</span>
+                            {{end}}
+                        </div>
+
+                        {{else}}
+                        <!-- Submitted state -->
+                        <div class="alert alert-success" style="margin: 1rem 0;">
+                            <strong>Submitted:</strong> Published to official hackathon gallery.
+                        </div>
+                        <div class="entry-actions" style="margin-top: 1rem;">
+                            <a href="/projects/{{.ID}}" class="btn-sm btn-primary">View in Public Gallery ↗</a>
                         </div>
                         {{end}}
                     </div>
-                    {{else}}
-                    <p class="text-muted">No projects created yet for this team.</p>
                     {{end}}
+                </div>
+                {{else}}
+                <!-- Has team, but no project yet -->
+                <div class="card" style="background: var(--bg-warm-light); padding: 1.5rem;">
+                    <h4>Create Project</h4>
+                    <p class="subtitle">Your team has not created a project yet. Fill out the form below to create your submission.</p>
 
-                    <!-- Create New Project Form -->
                     {{if .SubmissionsOpen}}
-                    <div class="new-project-box card">
-                        <h5>Create New Project / Submission</h5>
-                        <form action="/api/projects" method="POST" class="grid-form">
-                            <input type="hidden" name="team_id" value="{{.Team.ID}}">
-                            <div class="form-group">
-                                <label for="prj_title">Project Title</label>
-                                <input type="text" id="prj_title" name="title" required placeholder="Project Name">
-                            </div>
-                            <div class="form-group">
-                                <label for="prj_track">Track</label>
-                                <select id="prj_track" name="track_id" required>
-                                    {{range $.Tracks}}
-                                    <option value="{{.ID}}">{{.Name}}</option>
-                                    {{end}}
-                                </select>
-                            </div>
-                            <div class="form-group full-width">
-                                <label for="prj_summary">Summary</label>
-                                <textarea id="prj_summary" name="summary" rows="2" placeholder="One line of what it does." required></textarea>
-                            </div>
-                            <div class="form-group">
-                                <label for="prj_repo">Repository URL</label>
-                                <input type="url" id="prj_repo" name="repo_url" placeholder="https://github.com/..." required>
-                            </div>
-                            <div class="form-group">
-                                <label for="prj_demo">Demo URL (Optional)</label>
-                                <input type="url" id="prj_demo" name="demo_url" placeholder="https://...">
-                            </div>
-                            <div class="form-actions">
-                                <button type="submit" name="action" value="draft" class="btn-secondary">Save as Draft</button>
-                                <button type="submit" name="action" value="submit" class="btn-primary">Submit Project</button>
-                            </div>
-                        </form>
-                    </div>
+                    <form action="/api/projects" method="POST" class="grid-form" style="margin-top: 1.25rem;">
+                        <input type="hidden" name="team_id" value="{{.Team.ID}}">
+                        <div class="form-group">
+                            <label for="prj_title">Project Title</label>
+                            <input type="text" id="prj_title" name="title" required placeholder="e.g. NeuroSync">
+                        </div>
+                        <div class="form-group">
+                            <label for="prj_track">Track</label>
+                            <select id="prj_track" name="track_id" required>
+                                {{range $.Tracks}}
+                                <option value="{{.ID}}">{{.Name}}</option>
+                                {{end}}
+                            </select>
+                        </div>
+                        <div class="form-group full-width">
+                            <label for="prj_summary">Summary</label>
+                            <textarea id="prj_summary" name="summary" rows="3" placeholder="Explain what your project does, problem it solves, and tech stack." required></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="prj_repo">Repository URL</label>
+                            <input type="url" id="prj_repo" name="repo_url" placeholder="https://github.com/..." required>
+                        </div>
+                        <div class="form-group">
+                            <label for="prj_demo">Demo URL (Optional)</label>
+                            <input type="url" id="prj_demo" name="demo_url" placeholder="https://...">
+                        </div>
+                        <div class="form-actions full-width" style="display: flex; gap: 0.75rem;">
+                            <button type="submit" name="action" value="draft" class="btn-secondary">Save as Draft</button>
+                            <button type="submit" name="action" value="submit" class="btn-primary">Submit Project</button>
+                        </div>
+                    </form>
                     {{else}}
-                    <div class="alert alert-warning">
-                        <strong>Submissions Closed</strong>: Submissions deadline passed at {{.SubmissionsCloseAt}}. New projects and edits cannot be submitted.
+                    <div class="alert alert-error">
+                        <strong>Submissions Closed:</strong> The deadline has passed. New projects cannot be created.
                     </div>
                     {{end}}
                 </div>
+                {{end}}
             </div>
-            {{else}}
-            <!-- Not on a team: Create or Join -->
-            <div class="team-setup-grid">
-                <div class="card setup-box">
-                    <h4>Create a New Team</h4>
-                    <p class="subtitle">Start a new team for this hackathon. You will be the team lead.</p>
-                    <form action="/api/teams" method="POST">
-                        <div class="form-group">
-                            <label for="team_name">Team Name</label>
-                            <input type="text" id="team_name" name="name" placeholder="e.g. Nightshift" required>
-                        </div>
-                        <button type="submit" class="btn-primary">Create Team</button>
-                    </form>
-                </div>
-
-                <div class="card setup-box">
-                    <h4>Join an Existing Team</h4>
-                    <p class="subtitle">Enter the invite token provided by your teammate.</p>
-                    <form action="/api/teams/join" method="POST">
-                        <div class="form-group">
-                            <label for="invite_token">Invite Token</label>
-                            <input type="text" id="invite_token" name="token" placeholder="Paste token here" required>
-                        </div>
-                        <button type="submit" class="btn-outline">Join Team</button>
-                    </form>
-                </div>
-            </div>
-            {{end}}
         </section>
+        {{end}}
     </main>
+
+    <script>
+        function copyInviteURL() {
+            const field = document.getElementById('invite-url-field');
+            if (field) {
+                const fullURL = window.location.origin + field.value;
+                navigator.clipboard.writeText(fullURL).then(() => {
+                    alert('Invite URL copied to clipboard: ' + fullURL);
+                }).catch(() => {
+                    field.select();
+                    document.execCommand('copy');
+                    alert('Invite link copied!');
+                });
+            }
+        }
+    </script>
 </body>
 </html>

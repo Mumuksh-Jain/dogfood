@@ -53,17 +53,17 @@
         </div>
 
         {{if .Prizes}}
-        <section class="card" style="margin-bottom: 1.5rem;">
-            <h3 style="margin-top: 0; font-size: 1.05rem; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.05em;">Hackathon Prizes</h3>
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 0.75rem;">
+        <section class="card" style="margin-bottom: 1.75rem;">
+            <h3 style="margin-top: 0; font-size: 0.95rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700;">Hackathon Prizes</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-top: 0.85rem;">
                 {{range .Prizes}}
-                <div style="background: rgba(255,255,255,0.03); border: 1px solid #27272a; border-radius: 8px; padding: 0.75rem 1rem;">
+                <div style="background: var(--bg-warm); border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 0.85rem 1rem;">
                     <div style="display: flex; justify-content: space-between; align-items: baseline;">
-                        <strong style="color: #fafafa;">{{.Name}}</strong>
-                        {{if .AmountText}}<span style="color: #22c55e; font-weight: 600; font-size: 0.9rem;">{{.AmountText}}</span>{{end}}
+                        <strong style="color: var(--text); font-size: 0.95rem;">{{.Name}}</strong>
+                        {{if .AmountText}}<span style="color: var(--success); font-weight: 700; font-size: 0.9rem;">{{.AmountText}}</span>{{end}}
                     </div>
-                    {{if .Description}}<p style="margin: 0.25rem 0 0; font-size: 0.85rem; color: #a1a1aa;">{{.Description}}</p>{{end}}
-                    <span class="tag" style="margin-top: 0.5rem; display: inline-block; font-size: 0.75rem;">{{.TrackName}}</span>
+                    {{if .Description}}<p style="margin: 0.35rem 0 0; font-size: 0.85rem; color: var(--text-secondary);">{{.Description}}</p>{{end}}
+                    <span class="tag" style="margin-top: 0.6rem; display: inline-block; font-size: 0.72rem;">{{.TrackName}}</span>
                 </div>
                 {{end}}
             </div>

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sign In — Dogfood 2026</title>
+    <title>Sign In — {{if .EventName}}{{.EventName}}{{else}}Dogfood 2026{{end}}</title>
     <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
@@ -22,55 +22,52 @@
 
     <main class="container form-container">
         <div class="card auth-card">
-            <h2>Sign In to Dogfood</h2>
-            <p class="subtitle">Enter your email or select an evaluation role below.</p>
+            <h2>Sign In to Dogfood 2026</h2>
+            <p class="subtitle">Select a demo identity below for immediate access, or enter your registered email address.</p>
+
+            {{if .Message}}
+            <div class="alert alert-success">{{.Message}}</div>
+            {{end}}
 
             {{if .Error}}
             <div class="alert alert-error">{{.Error}}</div>
             {{end}}
 
+            <!-- 1-Click Demo Accounts -->
+            <div class="demo-section">
+                <h3 style="font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 0.75rem;">
+                    Demo Personas
+                </h3>
+                <div class="demo-grid">
+                    {{range .DemoAccounts}}
+                    <form action="/login" method="POST">
+                        <input type="hidden" name="demo_user" value="{{.Key}}">
+                        {{if $.ReturnTo}}<input type="hidden" name="return_to" value="{{$.ReturnTo}}">{{end}}
+                        <button type="submit" class="demo-card">
+                            <div class="demo-title">
+                                <span>{{.DisplayName}}</span>
+                                <span class="role-pill pill-{{.Role | lower}}">{{.Role}}</span>
+                            </div>
+                            <div class="demo-purpose">{{.Purpose}}</div>
+                        </button>
+                    </form>
+                    {{end}}
+                </div>
+            </div>
+
+            <div class="auth-divider">
+                <span>OR SIGN IN WITH EMAIL</span>
+            </div>
+
+            <!-- Email Sign In Form -->
             <form action="/login" method="POST" class="auth-form">
+                {{if .ReturnTo}}<input type="hidden" name="return_to" value="{{.ReturnTo}}">{{end}}
                 <div class="form-group">
                     <label for="email">Email Address</label>
-                    <input type="email" id="email" name="email" placeholder="name@example.org" required autofocus>
+                    <input type="email" id="email" name="email" placeholder="name@example.org" required>
                 </div>
                 <button type="submit" class="btn-primary btn-block">Continue with Email</button>
             </form>
-
-            <div class="auth-divider">
-                <span>OR SELECT EVALUATION ROLE</span>
-            </div>
-
-            <div class="quick-login-grid">
-                <form action="/login" method="POST">
-                    <input type="hidden" name="token" value="org_7f2a">
-                    <button type="submit" class="btn-outline quick-btn">
-                        <strong>Organizer</strong>
-                        <span class="subtext">Full event & export access</span>
-                    </button>
-                </form>
-                <form action="/login" method="POST">
-                    <input type="hidden" name="token" value="jdg_a_91bc">
-                    <button type="submit" class="btn-outline quick-btn">
-                        <strong>Judge A (Tomas Varga)</strong>
-                        <span class="subtext">Private scoring & assignments</span>
-                    </button>
-                </form>
-                <form action="/login" method="POST">
-                    <input type="hidden" name="token" value="jdg_b_44de">
-                    <button type="submit" class="btn-outline quick-btn">
-                        <strong>Judge B (Wei Lindqvist)</strong>
-                        <span class="subtext">Independent peer judging</span>
-                    </button>
-                </form>
-                <form action="/login" method="POST">
-                    <input type="hidden" name="token" value="prt_2e88">
-                    <button type="submit" class="btn-outline quick-btn">
-                        <strong>Participant (Team tm_01)</strong>
-                        <span class="subtext">Team projects & drafts</span>
-                    </button>
-                </form>
-            </div>
         </div>
     </main>
 </body>

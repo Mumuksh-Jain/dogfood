@@ -606,6 +606,53 @@ Before advancing to Tier 2 (judging schema, rubrics, and ballots), this checkpoi
 
 ---
 
+### Checkpoint 8: T1 Human Product Closure (Auth Architecture, Demo Personas, Browser Team Flow, Workspaces)
+
+#### Context
+While automated acceptance suites (`run.py`) verify API endpoints, human users interact through web browsers. This checkpoint resolves authentication UX drift, provides 1-click demo personas without token exposure, implements the end-to-end browser team invitation lifecycle, and builds role-tailored workspaces for organizers, participants, and judges.
+
+---
+
+#### Decision 8.1 — Strict Separation of Official Acceptance Tokens and Human Browser Sessions
+* **Problem**: The site previously relied on static fixture sessions (`org_7f2a`, `jdg_a_91bc`, etc.). When a human logged out, the session in SQLite was marked `revoked_at`, permanently breaking subsequent runs of `official/run.py` and preventing repeated human logins.
+* **Solution**:
+  - Implemented `ProtectedAcceptanceTokens` in [`internal/auth/auth.go`](file:///c:/Users/Administrator/Downloads/dogfood/internal/auth/auth.go) protecting `org_7f2a`, `jdg_a_91bc`, `jdg_b_44de`, `prt_2e88`. Revocation attempts on these tokens are ignored.
+  - In `handleLogin`, demo persona selection or email entry dynamically provisions a fresh, unique session token (`auth.LoginUser`), which is set in the `session` cookie.
+  - On `/logout`, only this newly created human browser session is revoked.
+  - Users can now log in, log out, and log in again repeatedly without invalidating official evaluation tokens.
+
+---
+
+#### Decision 8.2 — Dedicated Team Invitation Confirmation Page (`/teams/join`)
+* **Problem**: Joining a team via invite token required pasting raw tokens into text boxes or direct API calls.
+* **Solution**:
+  - Built dedicated HTML view ([`web/templates/team_join.html`](file:///c:/Users/Administrator/Downloads/dogfood/web/templates/team_join.html)) served at `GET /teams/join?token=<token>`.
+  - Displays team name, current capacity (e.g. `1 of 4 members`), inviter name, and expiration time.
+  - For unauthenticated users: displays clear "Sign In to Accept Invitation" button carrying `return_to=/teams/join?token=<token>`, returning them directly back to the confirmation page after logging in.
+  - For authenticated users: provides single-click "Accept Invitation & Join Team" button.
+  - Replaying an already-used or expired invitation renders a clean human-readable error banner ("This invitation has already been used" or "Invalid or expired invitation").
+
+---
+
+#### Decision 8.3 — Role-Tailored Human Workspaces (`/dashboard`)
+* **Problem**: Dashboard was either a raw JSON dump or lacked unified controls for different roles.
+* **Solution**:
+  - **Participant Workspace**: Shows "My Team" with active members, lead badges, and a "+ Generate Invite Link" button that creates copyable shareable URLs (`/teams/join?token=...`). Shows "Team Projects" with draft creation, draft editing, and submission triggers.
+  - **Organizer Workspace**: Unified workspace with sections for Event Windows, Track management (with project counts and add track form), Prize management (with amount, track association, and add prize form), All Registered Teams table, All Projects table, and single-click CSV Export link.
+  - **Judge Workspace**: Explicit role banner displaying judge identity, active event, and clear notice that review assignments and scoring rubrics become active in Tier 2.
+
+---
+
+#### Decision 8.4 — Automated Human Acceptance Test Suite (`human_acceptance_test.go`)
+* **Solution**: Created five comprehensive integration tests executing complete browser user journeys:
+  - **Flow A (`TestHumanAcceptance_FlowA_Auth`)**: Demo persona logins, session revocation, repeated re-login, and protected acceptance token isolation.
+  - **Flow B (`TestHumanAcceptance_FlowB_Team`)**: Participant A team creation -> invite link generation -> logout -> unauthenticated visit -> Participant B login -> accept invite -> dashboard reflects both members -> invite replay fails -> capacity limit enforcement.
+  - **Flow C (`TestHumanAcceptance_FlowC_Project`)**: Participant draft creation -> draft hidden from public gallery -> draft editing -> project submission -> immediate appearance in public gallery.
+  - **Flow D (`TestHumanAcceptance_FlowD_Organizer`)**: Organizer views event, creates track and prize via browser forms, with participant 403 authorization verification.
+  - **Flow E (`TestHumanAcceptance_FlowE_Judge`)**: Judge workspace verification, organizer route 403 protection, and peer score isolation.
+
+---
+
 ## 4. Verification Matrix
 
 | Checkpoint | Verified Property | Exact Command / Test | Status |
@@ -629,6 +676,11 @@ Before advancing to Tier 2 (judging schema, rubrics, and ballots), this checkpoi
 | **T1 Events** | Event creation & date validation | `TestT1_EventCreation_And_DateValidation` | **PASS** (201 created, 400 on bad dates) |
 | **T1 Tracks** | Track & Prize configuration | `TestT1_TrackAndPrize_Configuration` | **PASS** (Tracks & Prizes configured & queried) |
 | **T1 E2E** | Full draft to submit lifecycle | `TestT1_FullSubmissionLifecycle_HappyPath` | **PASS** (Draft -> Edit -> Submit -> Public) |
+| **Human Flow A** | Auth personas & session isolation | `TestHumanAcceptance_FlowA_Auth` | **PASS** (5 personas login/logout, tokens protected) |
+| **Human Flow B** | Browser team flow & invite replay | `TestHumanAcceptance_FlowB_Team` | **PASS** (Create -> Invite -> Join -> Replay err -> 4 max) |
+| **Human Flow C** | Project draft to gallery lifecycle | `TestHumanAcceptance_FlowC_Project` | **PASS** (Draft hidden -> Edit -> Submit -> Public) |
+| **Human Flow D** | Organizer workspace & tracks/prizes | `TestHumanAcceptance_FlowD_Organizer` | **PASS** (All tabs render, track/prize created, 403 guards) |
+| **Human Flow E** | Judge workspace & peer isolation | `TestHumanAcceptance_FlowE_Judge` | **PASS** (Identity rendered, T2 notice, 403 guards) |
 | **Checker** | T1: Gallery is public | `python official/run.py .dogfood.toml` | **PASS** (HTTP 200) |
 | **Checker** | T1: Fixture projects shown | `python official/run.py .dogfood.toml` | **PASS** ("Glass Signal" present) |
 | **Checker** | T1: Closed event refuses submissions | `python official/run.py .dogfood.toml` | **PASS** (HTTP 403) |

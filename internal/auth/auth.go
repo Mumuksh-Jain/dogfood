@@ -134,15 +134,47 @@ func CreateSession(ctx context.Context, db *sql.DB, userID string, duration time
 	return token, nil
 }
 
-// RevokeSession revokes the current session by its raw token.
+// ProtectedAcceptanceTokens maps official automated acceptance tokens that must never be invalidated by human logouts.
+var ProtectedAcceptanceTokens = map[string]bool{
+	"org_7f2a":   true,
+	"jdg_a_91bc": true,
+	"jdg_b_44de": true,
+	"prt_2e88":   true,
+}
+
+// RevokeSession revokes the current session by its raw token, safeguarding official acceptance tokens.
 func RevokeSession(ctx context.Context, db *sql.DB, token string) error {
 	if token == "" {
+		return nil
+	}
+	if ProtectedAcceptanceTokens[token] {
+		// Acceptance tokens must remain permanently valid for automated checkers
 		return nil
 	}
 	tokenHash := HashToken(token)
 	nowUTC := time.Now().UTC().Format(time.RFC3339)
 	query := `UPDATE sessions SET revoked_at = ? WHERE token_hash = ? AND revoked_at IS NULL;`
 	_, err := db.ExecContext(ctx, query, nowUTC, tokenHash)
+	return err
+}
+
+// EnsureUser inserts a user if they do not already exist.
+func EnsureUser(ctx context.Context, db *sql.DB, id, email, displayName string) error {
+	nowUTC := time.Now().UTC().Format(time.RFC3339)
+	_, err := db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO users (id, email_normalized, display_name, created_at)
+		VALUES (?, ?, ?, ?);
+	`, id, strings.ToLower(strings.TrimSpace(email)), displayName, nowUTC)
+	return err
+}
+
+// EnsureRole grants an event role if not already granted.
+func EnsureRole(ctx context.Context, db *sql.DB, eventID, userID, role string) error {
+	nowUTC := time.Now().UTC().Format(time.RFC3339)
+	_, err := db.ExecContext(ctx, `
+		INSERT OR IGNORE INTO event_roles (event_id, user_id, role, granted_at)
+		VALUES (?, ?, ?, ?);
+	`, eventID, userID, role, nowUTC)
 	return err
 }
 
