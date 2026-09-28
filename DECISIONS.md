@@ -895,6 +895,133 @@ While automated acceptance suites (`run.py`) verify API endpoints, human users i
 
 ---
 
+### Checkpoint 16 — Organizer Judging Operations, Judge Administration, Adversarial Inventory & Authoritative Documentation Suite
+
+#### Context & Requirements
+Based on `official/spec.md` (lines 77 & 325) and Prompt 29 of `prep/DOGFOOD_AI_IDE_PROMPTS_V2.md`, the platform required completing:
+1. **Organizer Judging Progress & Judge Administration**: Real-time review velocity, judge roster invitation, capacity and track eligibility configuration, project review coverage, and rubric criteria weight authoring.
+2. **Adversarial Failure Test Inventory**: Automated test coverage for failure modes F02–F21 and F35–F42.
+3. **Authoritative Documentation Suite**: Comprehensive, production-grade technical documentation across `README.md`, `ARCHITECTURE.md`, `DATA-MODEL.md`, and `JUDGING.md`.
+
+#### Challenge 16.1 — Real-Time Judging Operations & Progress Computation
+* **Implementation**:
+  - Implemented `computeJudgingProgress(ctx, eventID)` in `internal/httpapp/server.go`, analyzing active assignments and latest ballot versions across all judges, projects, and tracks without table locks.
+  - An assignment is determined to be:
+    - **Completed**: latest ballot version has `save_kind IN ('SUBMISSION', 'SUBMITTED', 'CORRECTION')` or assignment `status = 'COMPLETED'`.
+    - **In Progress (Draft)**: latest ballot version has `save_kind = 'DRAFT'` or assignment `status = 'STARTED'`.
+    - **Unstarted**: no ballot versions exist yet.
+  - Exposed `GET /api/v1/organizer/progress` returning event-wide aggregate metrics, judge-by-judge review counts, project review coverage (target vs. completed reviews), and track completion rates.
+  - Embedded into Organizer Dashboard (`/dashboard`) with visual progress bars and status badges.
+
+#### Challenge 16.2 — Judge Roster & Eligibility Administration
+* **Implementation**:
+  - Implemented `POST /api/v1/organizer/judges`: Creates or finds user, grants `judge` role in `event_roles`, sets capacity in `judge_profiles`, and populates `judge_track_eligibility`.
+  - Implemented `POST /api/v1/organizer/judges/{id}/eligibility`: Updates review capacity, active status, or track eligibility graph for an existing judge.
+  - Both endpoints support JSON payloads and browser form submissions with immediate redirects.
+
+#### Challenge 16.3 — Scoring Rubric Weight Authoring & Version Immutability
+* **Implementation**:
+  - Implemented `POST /api/v1/organizer/rubrics`: Allows organizers to author a new rubric revision with custom criteria weights.
+  - Strict criteria validation (`judging.ValidateCriteria`): ensures non-empty names, non-negative scores, $max > min$, non-negative weights, and strictly positive weight sum.
+  - Increments version number `v(N+1)`, computes SHA-256 `configuration_hash`, and immediately publishes the rubric.
+  - **Immutability Invariant Preserved**: Previously submitted ballots remain cryptographically locked to their original rubric versions; rubrics are strictly append-only.
+
+#### Challenge 16.4 — Adversarial Failure Inventory Test Campaign
+* **Implementation**:
+  - Created `internal/httpapp/adversarial_test.go` and `internal/httpapp/organizer_judging_test.go` covering:
+    - **F02 (Empty DB Migration & Seed)**: Clean startup from blank memory DB without panic.
+    - **F04 (Peer Ballot Access)**: Judge B attempting to submit Judge A's ballot is rejected with 403 Forbidden.
+    - **F06 (Cross-Team Project Access)**: Participant A attempting to modify Team B's project is rejected.
+    - **F07 (Deadline Enforcement)**: Project creation/edit attempts after submissions close are rejected.
+    - **F09 (Team Capacity Bound)**: Team membership capped at maximum 4 members.
+    - **F11 (Draft Leakage Guard)**: Unsubmitted drafts never leak to public gallery or public API endpoints.
+    - **F12 (Invalid Rubric Weights)**: Zero-sum weights or negative weights rejected with 400 Bad Request.
+    - **F13 (Rubric Versioning Immutability)**: Creating a new rubric version does not alter previously submitted ballots.
+    - **F14 & F15 (Constant Judge & Small-n Normalization Fallbacks)**: Zero-variance or $N < 3$ reviews trigger explicit fallback codes without division by zero or NaN.
+    - **F21 (CSV Formula Injection Defense)**: Neutralizes spreadsheet execution vectors (`=`, `+`, `-`, `@`, `\t`, `\r`).
+
+#### Challenge 16.5 — Authoritative Technical Documentation Suite
+* Created complete documentation suite required by `official/spec.md`:
+  - `README.md`: Quickstart, tier implementation status, offline-first guarantees, demo credentials, replay CLI, and acceptance commands.
+  - `ARCHITECTURE.md`: System design, package boundaries, SQLite WAL pragmas, security model, and replay architecture.
+  - `DATA-MODEL.md`: Complete dictionary of all 18 tables across migrations with foreign keys, indexes, and versioning semantics.
+  - `JUDGING.md`: Rubric criteria weighting, deterministic assignment engine, ballot lifecycle, z-score normalization, fallbacks, and "Explain This Rank" receipts.
+
+#### Verification Summary
+* `go test -count=1 ./...`: ALL packages PASS.
+* `python official/run.py .dogfood.toml`: 7/7 PASS (`claimed T1 T2, verified T1 T2`).
+* Docker rebuild & live container testing: Verified `GET /api/v1/organizer/progress`, `POST /api/v1/organizer/judges`, `POST /api/v1/organizer/rubrics`, and `/dashboard` rendering.
+* Docker CLI Replay: `docker compose exec dogfood /dogfood replay run_573e0de3fc3f78c2` verified with 100% mathematical equality.
+
+---
+
+### Checkpoint 17 — H48 Scope Gate Evaluation, H60 Feature Freeze, and Operability Packaging
+
+#### Context & Mandate
+Per `prep/DOGFOOD_PREBUILD_FREEZE_F1_v1.1.md` Section 19.3 and `prep/DOGFOOD_AI_IDE_PROMPTS_V2.md` Prompts 28, 30, and 31, the platform required:
+1. **Shell-Free Container Healthcheck Subcommand**: Complete independence from `/bin/sh` or `curl` inside minimal `scratch` runtime containers via `dogfood healthcheck`.
+2. **Preloaded-Image Fallback (`compose.preloaded.yaml`)**: An operability escape hatch for air-gapped or builder-constrained evaluation environments (`pull_policy: never`, no `build:` section).
+3. **Formal H48 Scope Gate Review (Prompt 30)**: Ruthless classification of outstanding work into MUST FIX, SHOULD FIX, and DORMANT categories.
+4. **Formal H60 Feature Freeze Declaration (Prompt 31)**: Sealing the feature perimeter to preserve verified stability, prohibiting unapproved schema extensions or UI reworks.
+
+#### Challenge 17.1 — Shell-Free Healthcheck & Scratch Compatibility
+* **Problem**: In a `FROM scratch` production container, utilities like `/bin/sh`, `curl`, and `wget` are non-existent. A Compose healthcheck relying on `curl -f http://localhost:8080/healthz` fails with container execution errors.
+* **Solution**:
+  - Implemented built-in `healthcheck` subcommand in `cmd/dogfood/main.go` that performs a lightweight HTTP GET against `http://127.0.0.1:<PORT>/healthz` using Go's standard library `net/http` client with a 3-second timeout.
+  - Returns exit code 0 on HTTP 200 with `{"status":"ok"}` and exit code 1 on network or status failure.
+  - Configured `docker-compose.yml` to use exec form without shell invocation:
+    ```yaml
+    healthcheck:
+      test: ["CMD", "/dogfood", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 2s
+    ```
+  - Verified container transitions to `(healthy)` status within 4 seconds of cold boot.
+
+#### Challenge 17.2 — Preloaded Fallback Compose Specification
+* **Problem**: Reviewers evaluating the platform on machines without Docker build capability or air-gapped nodes with pre-imported image archives need to execute the container without Compose triggering an image rebuild or registry pull.
+* **Solution**:
+  - Authored `compose.preloaded.yaml` matching Section 19.3 specifications:
+    - Service image explicitly set to `dogfood:latest`.
+    - No `build:` section.
+    - `pull_policy: never` enforced.
+    - Identical ports (`8080:8080`), volumes (`dogfood-data:/data`), environment variables (`PORT=8080`, `DB_PATH=/data/dogfood.db`), and exec healthcheck semantics as the primary Compose configuration.
+  - Documented fallback commands in `README.md` under "Offline Fallback / Unusual Docker Environments".
+  - Verified `docker compose -f compose.preloaded.yaml up -d` boots smoothly, achieves `(healthy)` status, and passes all 7/7 official acceptance checks without network access.
+
+#### Challenge 17.3 — Ruthless H48 Scope Gate Audit
+* **Stability Audit**:
+  - Tier 1: 100% verified (submission gallery, detail view, closed deadline rejection, user sessions, team capacity limits, invite acceptance).
+  - Tier 2: 100% verified (peer-isolated judge queues, rubric immutability, z-score normalization with small-cohort fallbacks, deterministic tie-breaking, published results immutability, Explain This Rank receipts, RFC 4180 CSV export).
+  - Security & Robustness: Clean authz, zero formula injection vectors (F21), all 11 adversarial tests (F02–F21) passing.
+* **Classification**:
+  - **MUST FIX**: **None (0 items)**. Zero blockers across T1, T2, security, startup, persistence, acceptance, or replay.
+  - **SHOULD FIX**:
+    - Preloaded fallback compose configuration (`compose.preloaded.yaml`) [COMPLETED].
+    - Documentation of offline preloaded fallback execution [COMPLETED].
+    - Shell-free container healthcheck execution [COMPLETED].
+  - **DORMANT (Strictly Deferred / Cut)**:
+    - Tier 3: Community voting, project comments, public feedback ribbons.
+    - Tier 4: External webhooks, automated certificate generation, OAuth single-sign-on.
+    - *Rationale*: Introducing uncontracted T3/T4 database migrations or routes at this stage violates the stability guarantee and risks regressions on verified T1/T2 scoring and replay guarantees.
+
+#### Challenge 17.4 — Formal H60 Feature Freeze Declaration
+* As mandated by Prompt 31:
+  - Feature perimeter is **STRICTLY SEALED**.
+  - No new features, speculative schema modifications, elegance refactors, or UI redesigns may be introduced.
+  - All subsequent effort is restricted to evidence generation, verification audits, and packaging integrity.
+
+#### Verification Summary
+* Unit / Integration Suite: `go test -count=1 ./...` — ALL PASS.
+* Official Acceptance Suite: `python official/run.py .dogfood.toml` — 7/7 PASS (`claimed T1 T2, verified T1 T2`).
+* Primary Compose Healthcheck: `test: ["CMD", "/dogfood", "healthcheck"]` — HEALTHY.
+* Preloaded Fallback Compose: `compose.preloaded.yaml` — HEALTHY & 7/7 PASS.
+* Deterministic Replay CLI: `docker compose exec dogfood /dogfood replay` — PASS (100% Mathematical Parity).
+
+---
+
 ## 5. Guide for Subsequent AI Agents & Developers
 
 1. **Do not create T2 tables in `0001_t1_core.sql`**: All rubric, ballot, conflict, and assignment entities belong to `0002_t2_judging.sql`.

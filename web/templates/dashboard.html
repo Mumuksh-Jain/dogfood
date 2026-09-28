@@ -24,9 +24,13 @@
                 <a href="/dashboard" class="nav-link active">Dashboard</a>
                 {{if or .IsOrganizer .IsAdmin}}
                 <a href="#event" class="nav-link">Event</a>
+                <a href="#judging-progress" class="nav-link">Judging Progress</a>
+                <a href="#judge-roster" class="nav-link">Judges</a>
+                <a href="#rubrics" class="nav-link">Rubrics</a>
                 <a href="#tracks-prizes" class="nav-link">Tracks &amp; Prizes</a>
                 <a href="#all-teams" class="nav-link">Teams</a>
                 <a href="#all-projects" class="nav-link">Projects</a>
+                <a href="#results-management" class="nav-link">Results</a>
                 {{end}}
                 {{if .IsJudge}}
                 <a href="#judge-workspace" class="nav-link">Judge</a>
@@ -285,13 +289,338 @@
 
             <hr class="divider">
 
-            <!-- Judging Rubrics -->
-            <div id="rubrics" style="margin-top: 1rem;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem;">
+            <!-- Judging Operations & Live Progress Control Room -->
+            <div id="judging-progress" style="margin-top: 1rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
                     <div>
-                        <h4 style="margin: 0;">Evaluation Rubrics</h4>
-                        <p class="subtitle" style="margin: 0; font-size: 0.85rem;">Versioned scoring rubrics with cryptographic configuration hashes.</p>
+                        <h4 style="margin: 0;">Judging Operations &amp; Live Progress</h4>
+                        <p class="subtitle" style="margin: 0; font-size: 0.85rem;">Real-time review velocity, judge workload distribution, and project evaluation coverage.</p>
                     </div>
+                </div>
+
+                {{if .JudgingProgress}}
+                <!-- Aggregate Progress Banner -->
+                <div class="meta-banner" style="margin-top: 0.5rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 1rem;">
+                    <div class="meta-cell">
+                        <span class="label">Total Assignments</span>
+                        <span class="value">{{.JudgingProgress.TotalAssignments}}</span>
+                    </div>
+                    <div class="meta-cell">
+                        <span class="label">Completed Reviews</span>
+                        <span class="value" style="color: var(--success);">{{.JudgingProgress.CompletedAssignments}}</span>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill {{if eq .JudgingProgress.CompletionRate 100.0}}fill-complete{{end}}" style="width: {{.JudgingProgress.CompletionRate}}%;"></div>
+                        </div>
+                        <small style="font-size: 0.72rem; color: var(--text-muted);">{{.JudgingProgress.CompletionRate}}% done</small>
+                    </div>
+                    <div class="meta-cell">
+                        <span class="label">In Progress (Drafts)</span>
+                        <span class="value" style="color: #1a73e8;">{{.JudgingProgress.InProgressAssignments}}</span>
+                    </div>
+                    <div class="meta-cell">
+                        <span class="label">Unstarted</span>
+                        <span class="value" style="color: var(--warning);">{{.JudgingProgress.UnstartedAssignments}}</span>
+                    </div>
+                    <div class="meta-cell">
+                        <span class="label">Active Judges</span>
+                        <span class="value">{{.JudgingProgress.ActiveJudges}} / {{.JudgingProgress.TotalJudges}}</span>
+                    </div>
+                    <div class="meta-cell">
+                        <span class="label">Projects Fully Reviewed</span>
+                        <span class="value">{{.JudgingProgress.FullyReviewedProjects}} / {{.JudgingProgress.TotalProjects}}</span>
+                    </div>
+                </div>
+                {{end}}
+
+                <!-- Judge Roster & Progress -->
+                <div id="judge-roster" style="margin-top: 1.5rem;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
+                        <h5 style="margin: 0; font-size: 1rem;">Judge Roster &amp; Reviewer Progress</h5>
+                        <button type="button" class="btn-sm btn-outline" onclick="document.getElementById('add-judge-card').scrollIntoView({behavior:'smooth'})">+ Invite / Add Judge</button>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Judge</th>
+                                    <th>Capacity</th>
+                                    <th>Eligible Tracks</th>
+                                    <th>Assigned</th>
+                                    <th>Completed</th>
+                                    <th>Drafts</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{range .JudgeProgress}}
+                                <tr>
+                                    <td>
+                                        <strong>{{.DisplayName}}</strong><br>
+                                        <small class="text-muted">{{.Email}} &bull; <code>{{.JudgeUserID}}</code></small>
+                                    </td>
+                                    <td>{{.Capacity}}</td>
+                                    <td>
+                                        {{if .EligibleTracks}}
+                                            {{range .EligibleTracks}}
+                                            <span class="tag" style="font-size: 0.72rem;">{{.}}</span>
+                                            {{end}}
+                                        {{else}}
+                                            <span class="tag" style="font-size: 0.72rem;">All Tracks</span>
+                                        {{end}}
+                                    </td>
+                                    <td><strong>{{.AssignedCount}}</strong></td>
+                                    <td><span style="color: var(--success); font-weight: 600;">{{.CompletedCount}}</span></td>
+                                    <td><span style="color: #1a73e8;">{{.DraftCount}}</span></td>
+                                    <td>
+                                        {{if eq .Status "Completed"}}
+                                        <span class="status-badge status-completed">Completed</span>
+                                        {{else if eq .Status "In Progress"}}
+                                        <span class="status-badge status-in-progress">In Progress</span>
+                                        {{else}}
+                                        <span class="status-badge status-pending">Not Started</span>
+                                        {{end}}
+                                    </td>
+                                </tr>
+                                {{else}}
+                                <tr>
+                                    <td colspan="7" class="text-muted">No judges registered for this event yet.</td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Add / Invite Judge Form -->
+                    <div id="add-judge-card" class="card" style="background: var(--bg-warm-light); margin-top: 1.25rem; padding: 1.25rem;">
+                        <h5 style="margin-top: 0; margin-bottom: 0.5rem;">Invite / Configure Judge</h5>
+                        <p class="subtitle" style="margin-top: 0; font-size: 0.82rem;">Add a judge, set review capacity, and assign track eligibility.</p>
+                        <form action="/api/organizer/judges" method="POST" class="grid-form" style="margin-top: 0.75rem;">
+                            <div class="form-group">
+                                <label for="judge_email">Judge Email *</label>
+                                <input type="email" id="judge_email" name="email" placeholder="judge@example.com" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="judge_name">Full Name / Display Name</label>
+                                <input type="text" id="judge_name" name="display_name" placeholder="Dr. Alice Smith">
+                            </div>
+                            <div class="form-group">
+                                <label for="judge_capacity">Review Capacity</label>
+                                <input type="number" id="judge_capacity" name="capacity" value="5" min="1" max="50">
+                            </div>
+                            <div class="form-group full-width">
+                                <label>Eligible Tracks (Leave unchecked for all tracks)</label>
+                                <div style="display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 0.25rem;">
+                                    {{range .Tracks}}
+                                    <label style="font-size: 0.85rem; font-weight: normal; display: inline-flex; align-items: center; gap: 0.35rem;">
+                                        <input type="checkbox" name="track_ids" value="{{.ID}}"> {{.Name}}
+                                    </label>
+                                    {{end}}
+                                </div>
+                            </div>
+                            <div class="form-actions full-width" style="margin-top: 0.5rem;">
+                                <button type="submit" class="btn-primary btn-sm">+ Add Judge to Event</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Project Evaluation Coverage -->
+                <div id="project-coverage" style="margin-top: 1.5rem;">
+                    <h5 style="margin-top: 0; margin-bottom: 0.75rem; font-size: 1rem;">Project Review Coverage</h5>
+                    <div style="overflow-x: auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Project</th>
+                                    <th>Team</th>
+                                    <th>Track</th>
+                                    <th>Completed / Target</th>
+                                    <th>Coverage %</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{range .ProjectCoverage}}
+                                <tr>
+                                    <td>
+                                        <strong><a href="/projects/{{.ProjectID}}">{{.Title}}</a></strong><br>
+                                        <small class="text-muted"><code>{{.ProjectID}}</code></small>
+                                    </td>
+                                    <td>{{.TeamName}}</td>
+                                    <td><span class="tag" style="font-size: 0.72rem;">{{.TrackName}}</span></td>
+                                    <td><strong>{{.CompletedReviews}}</strong> / {{.TargetReviews}}</td>
+                                    <td style="min-width: 120px;">
+                                        <div class="progress-bar-container">
+                                            <div class="progress-bar-fill {{if eq .CoveragePercent 100.0}}fill-complete{{end}}" style="width: {{.CoveragePercent}}%;"></div>
+                                        </div>
+                                        <small style="font-size: 0.72rem; color: var(--text-muted);">{{.CoveragePercent}}%</small>
+                                    </td>
+                                    <td>
+                                        {{if eq .Status "Fully Reviewed"}}
+                                        <span class="status-badge status-completed">Fully Reviewed</span>
+                                        {{else if eq .Status "Partially Reviewed"}}
+                                        <span class="status-badge status-in-progress">Partially Reviewed</span>
+                                        {{else}}
+                                        <span class="status-badge status-pending">Pending</span>
+                                        {{end}}
+                                    </td>
+                                </tr>
+                                {{else}}
+                                <tr>
+                                    <td colspan="6" class="text-muted">No submitted projects found for review coverage.</td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Track Completion Breakdown -->
+                {{if .TrackProgress}}
+                <div id="track-coverage" style="margin-top: 1.5rem;">
+                    <h5 style="margin-top: 0; margin-bottom: 0.75rem; font-size: 1rem;">Track Completion Breakdown</h5>
+                    <div style="overflow-x: auto;">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Track</th>
+                                    <th>Projects</th>
+                                    <th>Total Assignments</th>
+                                    <th>Completed Reviews</th>
+                                    <th>Completion Rate</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{range .TrackProgress}}
+                                <tr>
+                                    <td><strong>{{.TrackName}}</strong></td>
+                                    <td>{{.ProjectCount}}</td>
+                                    <td>{{.TotalAssignments}}</td>
+                                    <td><span style="color: var(--success); font-weight: 600;">{{.CompletedReviews}}</span></td>
+                                    <td style="min-width: 140px;">
+                                        <div class="progress-bar-container">
+                                            <div class="progress-bar-fill {{if eq .CompletionRate 100.0}}fill-complete{{end}}" style="width: {{.CompletionRate}}%;"></div>
+                                        </div>
+                                        <small style="font-size: 0.72rem; color: var(--text-muted);">{{.CompletionRate}}%</small>
+                                    </td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {{end}}
+            </div>
+
+            <hr class="divider">
+
+            <!-- Judging Rubrics & Weight Authoring -->
+            <div id="rubrics" style="margin-top: 1rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
+                    <div>
+                        <h4 style="margin: 0;">Evaluation Rubrics &amp; Criteria Weighting</h4>
+                        <p class="subtitle" style="margin: 0; font-size: 0.85rem;">Versioned scoring rubrics with cryptographic configuration hashes and customizable weights.</p>
+                    </div>
+                </div>
+
+                <!-- Rubric Weight Authoring Form -->
+                <div class="card" style="background: var(--bg-warm-light); padding: 1.25rem; margin-bottom: 1.25rem;">
+                    <h5 style="margin-top: 0; margin-bottom: 0.35rem;">Author New Rubric Version</h5>
+                    <p class="subtitle" style="margin-top: 0; font-size: 0.82rem;">Create and publish a new immutable rubric revision with custom criteria weights. Prior ballots remain locked to previous versions.</p>
+                    <form action="/api/organizer/rubrics" method="POST" style="margin-top: 0.75rem;">
+                        <div class="grid-form" style="margin-bottom: 0.75rem;">
+                            <div class="form-group">
+                                <label for="rubric_id">Rubric ID</label>
+                                <input type="text" id="rubric_id" name="rubric_id" value="default" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="rubric_track">Track Scope (Optional)</label>
+                                <select id="rubric_track" name="track_id">
+                                    <option value="">Event Default (All Tracks)</option>
+                                    {{range .Tracks}}
+                                    <option value="{{.ID}}">{{.Name}}</option>
+                                    {{end}}
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Criteria Weight Inputs -->
+                        <div style="overflow-x: auto; margin-bottom: 1rem;">
+                            <table class="data-table" style="background: var(--bg-card);">
+                                <thead>
+                                    <tr>
+                                        <th>Criterion</th>
+                                        <th>Scale</th>
+                                        <th>Weight Multiplier</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>
+                                            <input type="hidden" name="crit_id" value="functionality">
+                                            <input type="hidden" name="crit_name" value="Functionality & Feature Completeness">
+                                            <input type="hidden" name="crit_desc" value="How well does the solution work? Are core features robust, stable, and complete?">
+                                            <input type="hidden" name="crit_min" value="0">
+                                            <input type="hidden" name="crit_max" value="5">
+                                            <strong>Functionality &amp; Feature Completeness</strong><br>
+                                            <small class="text-muted">Working features, stability, bug-free execution</small>
+                                        </td>
+                                        <td>0.0 &ndash; 5.0</td>
+                                        <td style="max-width: 120px;">
+                                            <input type="number" name="crit_weight" value="1.0" step="0.1" min="0.1" max="10.0" style="width: 100px;" required>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>
+                                            <input type="hidden" name="crit_id" value="quality">
+                                            <input type="hidden" name="crit_name" value="Code Quality & Technical Design">
+                                            <input type="hidden" name="crit_desc" value="Software architecture, code cleanliness, test coverage, and documentation.">
+                                            <input type="hidden" name="crit_min" value="0">
+                                            <input type="hidden" name="crit_max" value="5">
+                                            <strong>Code Quality &amp; Technical Design</strong><br>
+                                            <small class="text-muted">Architecture, clean code, tests, docs</small>
+                                        </td>
+                                        <td>0.0 &ndash; 5.0</td>
+                                        <td style="max-width: 120px;">
+                                            <input type="number" name="crit_weight" value="1.0" step="0.1" min="0.1" max="10.0" style="width: 100px;" required>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>
+                                            <input type="hidden" name="crit_id" value="innovation">
+                                            <input type="hidden" name="crit_name" value="Innovation & Creativity">
+                                            <input type="hidden" name="crit_desc" value="Originality of the concept, technical creativity, and unique problem-solving approach.">
+                                            <input type="hidden" name="crit_min" value="0">
+                                            <input type="hidden" name="crit_max" value="5">
+                                            <strong>Innovation &amp; Creativity</strong><br>
+                                            <small class="text-muted">Original concept, novelty, creative approach</small>
+                                        </td>
+                                        <td>0.0 &ndash; 5.0</td>
+                                        <td style="max-width: 120px;">
+                                            <input type="number" name="crit_weight" value="1.0" step="0.1" min="0.1" max="10.0" style="width: 100px;" required>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td>
+                                            <input type="hidden" name="crit_id" value="impact">
+                                            <input type="hidden" name="crit_name" value="Impact & Practical Usability">
+                                            <input type="hidden" name="crit_desc" value="Practical value, user experience, potential adoption, and real-world usefulness.">
+                                            <input type="hidden" name="crit_min" value="0">
+                                            <input type="hidden" name="crit_max" value="5">
+                                            <strong>Impact &amp; Practical Usability</strong><br>
+                                            <small class="text-muted">Real-world applicability, UI/UX polish</small>
+                                        </td>
+                                        <td>0.0 &ndash; 5.0</td>
+                                        <td style="max-width: 120px;">
+                                            <input type="number" name="crit_weight" value="1.0" step="0.1" min="0.1" max="10.0" style="width: 100px;" required>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <button type="submit" class="btn-primary btn-sm">Publish New Rubric Version</button>
+                    </form>
                 </div>
 
                 {{if .Rubrics}}

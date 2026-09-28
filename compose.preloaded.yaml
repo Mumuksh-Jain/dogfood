@@ -1,0 +1,21 @@
+services:
+  dogfood:
+    image: dogfood:latest
+    pull_policy: never
+    ports:
+      - "8080:8080"
+    volumes:
+      - dogfood-data:/data
+    environment:
+      - PORT=8080
+      - DB_PATH=/data/dogfood.db
+    healthcheck:
+      test: ["CMD", "/dogfood", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 2s
+    restart: unless-stopped
+
+volumes:
+  dogfood-data:

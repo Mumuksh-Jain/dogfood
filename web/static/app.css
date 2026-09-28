@@ -1317,3 +1317,42 @@ code {
   padding: 1.25rem 1.5rem;
   margin-bottom: 1.5rem;
 }
+
+/* Judging Operations & Progress Components */
+.progress-bar-container {
+  background: var(--bg-warm);
+  border-radius: var(--radius-pill);
+  height: 8px;
+  width: 100%;
+  overflow: hidden;
+  margin-top: 0.35rem;
+}
+
+.progress-bar-fill {
+  background: var(--accent);
+  height: 100%;
+  border-radius: var(--radius-pill);
+  transition: width 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.progress-bar-fill.fill-complete {
+  background: var(--success);
+}
+
+.status-completed {
+  background-color: var(--success-bg);
+  color: var(--success);
+  border: 1px solid var(--success-border);
+}
+
+.status-in-progress {
+  background-color: #e8f0fe;
+  color: #1a73e8;
+  border: 1px solid #c2e7ff;
+}
+
+.status-pending {
+  background-color: var(--warning-bg);
+  color: var(--warning);
+  border: 1px solid var(--warning-border);
+}

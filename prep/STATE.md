@@ -1,29 +1,29 @@
 # STATE
 
 ## Current phase
-T2 JUDGING: OFFLINE-FIRST RUNTIME PROOF & COMPLETE VERIFICATION
+CHECKPOINT 17: H48 SCOPE GATE EVALUATION, H60 FEATURE FREEZE & RELEASE PACKAGING
 
 ## Last checkpoint passed
-Checkpoint 15: Offline-First Requirement & Complete Network-Isolated Verification
-- Mandatory Offline-First Audit:
-  - Scanned all codebase files: 0 external CDNs, 0 Google Fonts, 0 external CSS/JS imports, 0 remote analytics, 0 third-party auth, 0 external databases, 0 remote scoring services.
-  - All UI templates (`web/templates/*.html`) and stylesheets (`web/static/app.css`) are embedded directly into the Go executable via `embed.FS`.
-  - The production Docker image uses `FROM scratch`, containing only `/dogfood` and `/official/fixtures.json`.
-- Live Network-Isolated Docker Proof:
-  - Created Docker internal network `dogfood_offline_test` with `--internal` flag (completely blocking all internet and WAN egress).
-  - Proved outbound connectivity unreachable: `ping 8.8.8.8` returns `Network unreachable`; external DNS/HTTP requests fail with `[Errno 101] Network is unreachable`.
-  - Executed full 14-step offline browser and workflow test suite from an attached container:
-    - Public pages (`/`, `/projects`, `/projects/prj_01`, `/login`): 200 OK, zero external assets.
-    - Organizer workflows (assignments, results compute, results publish): 200 OK.
-    - Participant workflows (`/dashboard`, team view, 403 authorization guards): 200/403 OK.
-    - Judge workflows (evaluation, draft, finalization, 409 ballot immutability lock): 200/409 OK.
-    - Peer isolation (Judge B blocked from Judge A evaluation and peer score API): 403 Forbidden.
-    - Results freshness & public leaderboard (`/results`, `/api/results`): 200 OK.
-    - Explain This Rank receipt (`/results/{run_id}/projects/{project_id}`): 200 OK.
-    - Auditable CSV export (`/api/export.csv`): 401 anon, 403 participant, 200 organizer with RFC 4180 and F21 formula sanitization.
-    - REST API v1 parity (`/api/v1/projects`, `/api/v1/teams`): 200 OK.
-  - Executed independent CLI replay inside isolated container: `100% Mathematical Equality Verified`.
-  - Executed official test runner (`official/run.py`) on `--internal` network: 7/7 PASS (`claimed T1 T2, verified T1 T2`).
+Checkpoint 17: H48 Scope Gate Evaluation, H60 Feature Freeze, Operability Packaging & Fallback Verification
+- Shell-Free Container Healthcheck:
+  - Built-in `dogfood healthcheck` subcommand in `cmd/dogfood/main.go` using pure standard library HTTP probe.
+  - Exec form healthcheck `["CMD", "/dogfood", "healthcheck"]` verified in Docker Compose on `FROM scratch` runtime without shell or curl.
+- Preloaded-Image Fallback (`compose.preloaded.yaml`):
+  - Created operability fallback Compose configuration per F1.1 Section 19.3 (`pull_policy: never`, no `build:` section).
+  - Pre-packaged standalone distribution image archive into `dist/dogfood-image-linux-amd64.tar.gz`.
+  - Added documentation under "Offline Fallback / Unusual Docker Environments" in `README.md`.
+  - Verified `compose.preloaded.yaml` boots cleanly, passes healthcheck, and passes all 7/7 official acceptance checks without network access.
+- Ruthless H48 Scope Gate Review (Prompt 30):
+  - MUST FIX: 0 items (T1, T2, authz, replay, persistence 100% stable).
+  - SHOULD FIX: Operability fallback compose file, documentation of fallback commands, shell-free healthcheck (all completed).
+  - DORMANT: All unstarted T3 (community voting/comments) and T4 (webhooks/certificates) features locked as dormant to protect stability and prevent regressions.
+- Formal H60 Feature Freeze Declaration (Prompt 31):
+  - Feature perimeter sealed; no new features, speculative schema changes, or UI redesigns allowed.
+- Full Verification:
+  - `go test -count=1 ./...`: ALL PASS.
+  - `python official/run.py .dogfood.toml`: 7/7 PASS (`claimed T1 T2, verified T1 T2`).
+  - Docker Compose primary & preloaded healthchecks: HEALTHY.
+  - Docker CLI Replay verification: PASS (100% Mathematical Equality Verified).
 
 ## Current blocker
 none
@@ -39,7 +39,7 @@ T2  csv export works .................. PASS
 claimed T1 T2, verified T1 T2
 
 ## Next action
-Ready for final review, commit, and push. Human controls Git.
+Ready for human review and git commit. Human controls Git.
 
 ## Known deltas since H0
 None.

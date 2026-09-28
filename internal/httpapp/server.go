@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -185,6 +186,13 @@ type DashboardData struct {
 	AssignmentRunCount int
 	TotalAssignments   int
 
+	// Organizer Judging Control Room & Progress
+	JudgingProgress *OrganizerJudgingProgress
+	JudgeProgress   []OrganizerJudgeProgressView
+	ProjectCoverage []OrganizerProjectCoverageView
+	TrackProgress   []OrganizerTrackProgressView
+	AllJudges       []OrganizerJudgeRosterView
+
 	// Judge workspace
 	JudgeAssignments []judging.AssignmentDetail
 
@@ -196,6 +204,71 @@ type DashboardData struct {
 
 	Message string
 	Error   string
+}
+
+// OrganizerJudgingProgress aggregates overall evaluation metrics for the event.
+type OrganizerJudgingProgress struct {
+	TotalAssignments      int     `json:"total_assignments"`
+	CompletedAssignments  int     `json:"completed_assignments"`
+	InProgressAssignments int     `json:"in_progress_assignments"`
+	UnstartedAssignments  int     `json:"unstarted_assignments"`
+	CompletionRate        float64 `json:"completion_rate"`
+	TotalJudges           int     `json:"total_judges"`
+	ActiveJudges          int     `json:"active_judges"`
+	CompletedJudges       int     `json:"completed_judges"`
+	TotalProjects         int     `json:"total_projects"`
+	FullyReviewedProjects int     `json:"fully_reviewed_projects"`
+}
+
+// OrganizerJudgeProgressView represents real-time progress for an individual judge.
+type OrganizerJudgeProgressView struct {
+	JudgeUserID    string   `json:"judge_user_id"`
+	DisplayName    string   `json:"display_name"`
+	Email          string   `json:"email"`
+	Capacity       int      `json:"capacity"`
+	Active         bool     `json:"active"`
+	AssignedCount  int      `json:"assigned_count"`
+	CompletedCount int      `json:"completed_count"`
+	DraftCount     int      `json:"draft_count"`
+	UnstartedCount int      `json:"unstarted_count"`
+	EligibleTracks []string `json:"eligible_tracks"`
+	Status         string   `json:"status"` // "Completed", "In Progress", "Not Started"
+}
+
+// OrganizerProjectCoverageView represents evaluation coverage for a single project submission.
+type OrganizerProjectCoverageView struct {
+	ProjectID        string  `json:"project_id"`
+	Title            string  `json:"title"`
+	TeamName         string  `json:"team_name"`
+	TrackName        string  `json:"track_name"`
+	TargetReviews    int     `json:"target_reviews"`
+	AssignedReviews  int     `json:"assigned_reviews"`
+	CompletedReviews int     `json:"completed_reviews"`
+	CoveragePercent  float64 `json:"coverage_percent"`
+	Status           string  `json:"status"` // "Fully Reviewed", "Partially Reviewed", "Pending"
+}
+
+// OrganizerTrackProgressView tracks judging completion per track.
+type OrganizerTrackProgressView struct {
+	TrackID          string  `json:"track_id"`
+	TrackName        string  `json:"track_name"`
+	ProjectCount     int     `json:"project_count"`
+	TotalAssignments int     `json:"total_assignments"`
+	CompletedReviews int     `json:"completed_reviews"`
+	CompletionRate   float64 `json:"completion_rate"`
+}
+
+// OrganizerJudgeRosterView represents judge configuration and management.
+type OrganizerJudgeRosterView struct {
+	UserID         string   `json:"user_id"`
+	DisplayName    string   `json:"display_name"`
+	Email          string   `json:"email"`
+	Capacity       int      `json:"capacity"`
+	Active         bool     `json:"active"`
+	InvitedAt      string   `json:"invited_at"`
+	EligibleTracks []string `json:"eligible_tracks"`
+	AssignedCount  int      `json:"assigned_count"`
+	CompletedCount int      `json:"completed_count"`
 }
 
 // EvaluationData is passed to evaluation.html template.
@@ -438,6 +511,7 @@ func NewServer(cfg Config) (*Server, error) {
 	// 12. Results, Leaderboard & Explain-This-Rank Auditability
 	mux.HandleFunc("GET /results", s.handleResultsPage)
 	mux.HandleFunc("GET /results/{run_id}/projects/{project_id}", s.handleExplainRankPage)
+	mux.HandleFunc("GET /results/{run_id}/explain/{project_id}", s.handleExplainRankPage)
 	mux.HandleFunc("POST /api/organizer/results/compute", s.handleComputeResults)
 	mux.HandleFunc("POST /api/v1/organizer/results/compute", s.handleComputeResults)
 	mux.HandleFunc("POST /api/organizer/results/{id}/publish", s.handlePublishResults)
@@ -448,12 +522,23 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /api/v1/results", s.handleGetActiveResultsAPI)
 	mux.HandleFunc("GET /api/results/{run_id}/projects/{project_id}", s.handleGetExplanationAPI)
 	mux.HandleFunc("GET /api/v1/results/{run_id}/projects/{project_id}", s.handleGetExplanationAPI)
+	mux.HandleFunc("GET /api/v1/results/{run_id}/explain/{project_id}", s.handleGetExplanationAPI)
 	mux.HandleFunc("GET /api/results/{run_id}/replay", s.handleReplayAPI)
 	mux.HandleFunc("GET /api/v1/results/{run_id}/replay", s.handleReplayAPI)
 	mux.HandleFunc("POST /api/results/{run_id}/replay", s.handleReplayAPI)
 	mux.HandleFunc("POST /api/v1/results/{run_id}/replay", s.handleReplayAPI)
 	mux.HandleFunc("GET /api/results/{run_id}/replay/{project_id}", s.handleReplayProjectAPI)
 	mux.HandleFunc("GET /api/v1/results/{run_id}/replay/{project_id}", s.handleReplayProjectAPI)
+
+	// 13. Organizer Judging Operations & Progress Control Room
+	mux.HandleFunc("GET /api/organizer/progress", s.handleOrganizerProgressAPI)
+	mux.HandleFunc("GET /api/v1/organizer/progress", s.handleOrganizerProgressAPI)
+	mux.HandleFunc("POST /api/organizer/judges", s.handleOrganizerCreateJudgeAPI)
+	mux.HandleFunc("POST /api/v1/organizer/judges", s.handleOrganizerCreateJudgeAPI)
+	mux.HandleFunc("POST /api/organizer/judges/{id}/eligibility", s.handleOrganizerUpdateJudgeEligibilityAPI)
+	mux.HandleFunc("POST /api/v1/organizer/judges/{id}/eligibility", s.handleOrganizerUpdateJudgeEligibilityAPI)
+	mux.HandleFunc("POST /api/organizer/rubrics", s.handleOrganizerCreateRubricAPI)
+	mux.HandleFunc("POST /api/v1/organizer/rubrics", s.handleOrganizerCreateRubricAPI)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	s.httpServer = &http.Server{
@@ -1107,6 +1192,14 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM result_runs WHERE event_id = ? AND status = 'DRAFT';", data.EventID).Scan(&draftCount)
 				data.DraftResultRunCount = draftCount
 			}
+		}
+
+		if prog, jProg, pCov, tProg, allJudges, err := s.computeJudgingProgress(r.Context(), data.EventID); err == nil {
+			data.JudgingProgress = prog
+			data.JudgeProgress = jProg
+			data.ProjectCoverage = pCov
+			data.TrackProgress = tProg
+			data.AllJudges = allJudges
 		}
 	}
 
@@ -3349,3 +3442,754 @@ func (s *Server) handleReplayProjectAPI(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(report)
 }
 
+// computeJudgingProgress queries real-time judging progress across judges, projects, and tracks.
+func (s *Server) computeJudgingProgress(ctx context.Context, eventID string) (
+	*OrganizerJudgingProgress,
+	[]OrganizerJudgeProgressView,
+	[]OrganizerProjectCoverageView,
+	[]OrganizerTrackProgressView,
+	[]OrganizerJudgeRosterView,
+	error,
+) {
+	if s.db == nil {
+		return nil, nil, nil, nil, nil, errors.New("db not initialized")
+	}
+	if eventID == "" {
+		_ = s.db.QueryRowContext(ctx, "SELECT id FROM events ORDER BY created_at ASC LIMIT 1;").Scan(&eventID)
+	}
+
+	// 1. Fetch tracks for the event
+	trackMap := make(map[string]string)
+	var trackIDs []string
+	tRows, err := s.db.QueryContext(ctx, "SELECT id, name FROM tracks WHERE event_id = ? ORDER BY name ASC;", eventID)
+	if err == nil {
+		defer tRows.Close()
+		for tRows.Next() {
+			var tid, tname string
+			if err := tRows.Scan(&tid, &tname); err == nil {
+				trackMap[tid] = tname
+				trackIDs = append(trackIDs, tid)
+			}
+		}
+	}
+
+	// 2. Fetch judge track eligibility
+	judgeTracksMap := make(map[string][]string)
+	eRows, err := s.db.QueryContext(ctx, `
+		SELECT jte.judge_user_id, t.name
+		FROM judge_track_eligibility jte
+		JOIN tracks t ON jte.track_id = t.id
+		WHERE jte.event_id = ? AND jte.eligible = 1
+		ORDER BY t.name ASC;
+	`, eventID)
+	if err == nil {
+		defer eRows.Close()
+		for eRows.Next() {
+			var jid, tname string
+			if err := eRows.Scan(&jid, &tname); err == nil {
+				judgeTracksMap[jid] = append(judgeTracksMap[jid], tname)
+			}
+		}
+	}
+
+	// 3. Query active assignments and their latest ballot state
+	type assignState struct {
+		judgeID   string
+		projectID string
+		status    string
+	}
+	var assignments []assignState
+
+	judgeAssigned := make(map[string]int)
+	judgeCompleted := make(map[string]int)
+	judgeDraft := make(map[string]int)
+	judgeUnstarted := make(map[string]int)
+
+	projAssigned := make(map[string]int)
+	projCompleted := make(map[string]int)
+
+	aRows, err := s.db.QueryContext(ctx, `
+		SELECT a.id, a.judge_user_id, a.project_id, a.status,
+		       COALESCE((SELECT b.save_kind FROM ballot_versions b WHERE b.assignment_id = a.id ORDER BY b.version_no DESC LIMIT 1), '') as latest_save_kind
+		FROM assignments a
+		WHERE a.event_id = ? AND a.status NOT IN ('CANCELLED', 'REASSIGNED');
+	`, eventID)
+	if err == nil {
+		defer aRows.Close()
+		for aRows.Next() {
+			var aid, jid, pid, astatus, latestSave string
+			if err := aRows.Scan(&aid, &jid, &pid, &astatus, &latestSave); err == nil {
+				judgeAssigned[jid]++
+				projAssigned[pid]++
+
+				state := "UNSTARTED"
+				if latestSave == "SUBMISSION" || latestSave == "SUBMITTED" || latestSave == "CORRECTION" || astatus == "COMPLETED" {
+					state = "COMPLETED"
+					judgeCompleted[jid]++
+					projCompleted[pid]++
+				} else if latestSave == "DRAFT" || astatus == "STARTED" {
+					state = "DRAFT"
+					judgeDraft[jid]++
+				} else {
+					judgeUnstarted[jid]++
+				}
+				assignments = append(assignments, assignState{
+					judgeID:   jid,
+					projectID: pid,
+					status:    state,
+				})
+			}
+		}
+	}
+
+	// 4. Fetch judges and build judge views
+	var judgeProgress []OrganizerJudgeProgressView
+	var allJudges []OrganizerJudgeRosterView
+	var totalJudges, activeJudges, completedJudges int
+
+	jRows, err := s.db.QueryContext(ctx, `
+		SELECT jp.user_id, u.display_name, u.email_normalized, jp.capacity, jp.active, jp.invited_at
+		FROM judge_profiles jp
+		JOIN users u ON jp.user_id = u.id
+		WHERE jp.event_id = ?
+		ORDER BY u.display_name ASC;
+	`, eventID)
+	if err == nil {
+		defer jRows.Close()
+		for jRows.Next() {
+			var jid, name, email, invitedAt string
+			var cap int
+			var activeInt int
+			if err := jRows.Scan(&jid, &name, &email, &cap, &activeInt, &invitedAt); err == nil {
+				totalJudges++
+				isActive := activeInt == 1
+				if isActive {
+					activeJudges++
+				}
+
+				assigned := judgeAssigned[jid]
+				completed := judgeCompleted[jid]
+				drafts := judgeDraft[jid]
+				unstarted := judgeUnstarted[jid]
+				tracks := judgeTracksMap[jid]
+
+				status := "Not Started"
+				if assigned > 0 && completed == assigned {
+					status = "Completed"
+					completedJudges++
+				} else if completed > 0 || drafts > 0 {
+					status = "In Progress"
+				}
+
+				judgeProgress = append(judgeProgress, OrganizerJudgeProgressView{
+					JudgeUserID:    jid,
+					DisplayName:    name,
+					Email:          email,
+					Capacity:       cap,
+					Active:         isActive,
+					AssignedCount:  assigned,
+					CompletedCount: completed,
+					DraftCount:     drafts,
+					UnstartedCount: unstarted,
+					EligibleTracks: tracks,
+					Status:         status,
+				})
+
+				allJudges = append(allJudges, OrganizerJudgeRosterView{
+					UserID:         jid,
+					DisplayName:    name,
+					Email:          email,
+					Capacity:       cap,
+					Active:         isActive,
+					InvitedAt:      formatDate(invitedAt),
+					EligibleTracks: tracks,
+					AssignedCount:  assigned,
+					CompletedCount: completed,
+				})
+			}
+		}
+	}
+
+	// 5. Fetch submitted projects and build coverage views
+	var projectCoverage []OrganizerProjectCoverageView
+	var fullyReviewedProjects int
+	projectTrackMap := make(map[string]string)
+
+	pRows, err := s.db.QueryContext(ctx, `
+		SELECT p.id, s.title, COALESCE(tm.name, 'Independent'), p.track_id, t.name
+		FROM projects p
+		JOIN tracks t ON p.track_id = t.id
+		LEFT JOIN teams tm ON p.team_id = tm.id
+		JOIN submissions s ON p.id = s.project_id AND s.version_no = (SELECT MAX(version_no) FROM submissions WHERE project_id = p.id)
+		WHERE p.event_id = ? AND s.state = 'SUBMITTED'
+		ORDER BY t.name ASC, p.id ASC;
+	`, eventID)
+	if err == nil {
+		defer pRows.Close()
+		for pRows.Next() {
+			var pid, title, teamName, trackID, trackName string
+			if err := pRows.Scan(&pid, &title, &teamName, &trackID, &trackName); err == nil {
+				projectTrackMap[pid] = trackID
+
+				assigned := projAssigned[pid]
+				completed := projCompleted[pid]
+				targetReviews := 3
+				if assigned > targetReviews {
+					targetReviews = assigned
+				} else if assigned > 0 && targetReviews > assigned {
+					targetReviews = assigned
+				}
+				if targetReviews <= 0 {
+					targetReviews = 1
+				}
+
+				covPct := 0.0
+				if targetReviews > 0 {
+					covPct = math.Min(100.0, float64(completed)/float64(targetReviews)*100.0)
+					covPct = math.Round(covPct*10) / 10
+				}
+
+				status := "Pending"
+				if (assigned > 0 && completed >= assigned) || (targetReviews > 0 && completed >= targetReviews) {
+					status = "Fully Reviewed"
+					fullyReviewedProjects++
+				} else if completed > 0 {
+					status = "Partially Reviewed"
+				}
+
+				projectCoverage = append(projectCoverage, OrganizerProjectCoverageView{
+					ProjectID:        pid,
+					Title:            title,
+					TeamName:         teamName,
+					TrackName:        trackName,
+					TargetReviews:    targetReviews,
+					AssignedReviews:  assigned,
+					CompletedReviews: completed,
+					CoveragePercent:  covPct,
+					Status:           status,
+				})
+			}
+		}
+	}
+
+	// 6. Build track progress views
+	var trackProgress []OrganizerTrackProgressView
+	for _, tid := range trackIDs {
+		tname := trackMap[tid]
+		var prjCount, totalAssign, compReviews int
+		for _, pc := range projectCoverage {
+			if projectTrackMap[pc.ProjectID] == tid {
+				prjCount++
+				totalAssign += pc.AssignedReviews
+				compReviews += pc.CompletedReviews
+			}
+		}
+
+		rate := 0.0
+		if totalAssign > 0 {
+			rate = math.Min(100.0, float64(compReviews)/float64(totalAssign)*100.0)
+			rate = math.Round(rate*10) / 10
+		}
+
+		trackProgress = append(trackProgress, OrganizerTrackProgressView{
+			TrackID:          tid,
+			TrackName:        tname,
+			ProjectCount:     prjCount,
+			TotalAssignments: totalAssign,
+			CompletedReviews: compReviews,
+			CompletionRate:   rate,
+		})
+	}
+
+	// 7. Aggregate overall JudgingProgress
+	totalAssignments := len(assignments)
+	completedAssignments := 0
+	inProgressAssignments := 0
+	unstartedAssignments := 0
+
+	for _, a := range assignments {
+		switch a.status {
+		case "COMPLETED":
+			completedAssignments++
+		case "DRAFT":
+			inProgressAssignments++
+		case "UNSTARTED":
+			unstartedAssignments++
+		}
+	}
+
+	completionRate := 0.0
+	if totalAssignments > 0 {
+		completionRate = math.Min(100.0, float64(completedAssignments)/float64(totalAssignments)*100.0)
+		completionRate = math.Round(completionRate*10) / 10
+	}
+
+	overallProgress := &OrganizerJudgingProgress{
+		TotalAssignments:      totalAssignments,
+		CompletedAssignments:  completedAssignments,
+		InProgressAssignments: inProgressAssignments,
+		UnstartedAssignments:  unstartedAssignments,
+		CompletionRate:        completionRate,
+		TotalJudges:           totalJudges,
+		ActiveJudges:          activeJudges,
+		CompletedJudges:       completedJudges,
+		TotalProjects:         len(projectCoverage),
+		FullyReviewedProjects: fullyReviewedProjects,
+	}
+
+	return overallProgress, judgeProgress, projectCoverage, trackProgress, allJudges, nil
+}
+
+// handleOrganizerProgressAPI returns complete judging metrics, judge progress, project coverage, and track progress.
+func (s *Server) handleOrganizerProgressAPI(w http.ResponseWriter, r *http.Request) {
+	user := s.getCurrentUser(r)
+	if user == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+	if !canAdminister(user) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: organizer or admin role required"})
+		return
+	}
+
+	var eventID string
+	_ = s.db.QueryRowContext(r.Context(), "SELECT id FROM events ORDER BY created_at ASC LIMIT 1;").Scan(&eventID)
+
+	prog, jProg, pCov, tProg, allJudges, err := s.computeJudgingProgress(r.Context(), eventID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"event_id": eventID,
+		"progress": prog,
+		"judges":   jProg,
+		"projects": pCov,
+		"tracks":   tProg,
+		"roster":   allJudges,
+	})
+}
+
+// handleOrganizerCreateJudgeAPI registers or invites a judge, setting capacity and track eligibility.
+func (s *Server) handleOrganizerCreateJudgeAPI(w http.ResponseWriter, r *http.Request) {
+	user := s.getCurrentUser(r)
+	if user == nil {
+		if !isBrowserForm(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			return
+		}
+		http.Redirect(w, r, "/login?error=Please+sign+in+first", http.StatusSeeOther)
+		return
+	}
+	if !canAdminister(user) {
+		if !isBrowserForm(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: organizer or admin role required"})
+			return
+		}
+		http.Redirect(w, r, "/dashboard?error=Organizer+privileges+required", http.StatusSeeOther)
+		return
+	}
+
+	var eventID string
+	_ = s.db.QueryRowContext(r.Context(), "SELECT id FROM events ORDER BY created_at ASC LIMIT 1;").Scan(&eventID)
+
+	var email, displayName string
+	capacity := 5
+	var trackIDs []string
+
+	contentType := r.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") {
+		var req struct {
+			Email       string   `json:"email"`
+			DisplayName string   `json:"display_name"`
+			Capacity    int      `json:"capacity"`
+			TrackIDs    []string `json:"track_ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON payload"})
+			return
+		}
+		email = strings.TrimSpace(req.Email)
+		displayName = strings.TrimSpace(req.DisplayName)
+		if req.Capacity > 0 {
+			capacity = req.Capacity
+		}
+		trackIDs = req.TrackIDs
+	} else {
+		_ = r.ParseForm()
+		email = strings.TrimSpace(r.FormValue("email"))
+		displayName = strings.TrimSpace(r.FormValue("display_name"))
+		if capStr := r.FormValue("capacity"); capStr != "" {
+			if c, err := strconv.Atoi(capStr); err == nil && c > 0 {
+				capacity = c
+			}
+		}
+		if tracksVal := r.FormValue("tracks"); tracksVal != "" {
+			for _, part := range strings.Split(tracksVal, ",") {
+				if t := strings.TrimSpace(part); t != "" {
+					trackIDs = append(trackIDs, t)
+				}
+			}
+		}
+		if formTracks := r.Form["track_ids"]; len(formTracks) > 0 {
+			trackIDs = append(trackIDs, formTracks...)
+		}
+	}
+
+	if email == "" {
+		if !isBrowserForm(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "email is required"})
+			return
+		}
+		http.Redirect(w, r, "/dashboard?error=Judge+email+is+required", http.StatusSeeOther)
+		return
+	}
+
+	normEmail := strings.ToLower(email)
+	if displayName == "" {
+		parts := strings.Split(normEmail, "@")
+		displayName = strings.Title(parts[0])
+	}
+
+	// Find or create user
+	var targetUserID string
+	err := s.db.QueryRowContext(r.Context(), "SELECT id FROM users WHERE email_normalized = ?;", normEmail).Scan(&targetUserID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			targetUserID = newID("usr")
+			nowUTC := time.Now().UTC().Format(time.RFC3339)
+			_, err = s.db.ExecContext(r.Context(), `
+				INSERT INTO users (id, email_normalized, display_name, created_at)
+				VALUES (?, ?, ?, ?);
+			`, targetUserID, normEmail, displayName, nowUTC)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		} else {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Grant judge role in event
+	nowUTC := time.Now().UTC().Format(time.RFC3339)
+	_, _ = s.db.ExecContext(r.Context(), `
+		INSERT OR IGNORE INTO event_roles (event_id, user_id, role, granted_at)
+		VALUES (?, ?, 'judge', ?);
+	`, eventID, targetUserID, nowUTC)
+
+	// Upsert judge profile
+	_, err = s.db.ExecContext(r.Context(), `
+		INSERT INTO judge_profiles (event_id, user_id, capacity, active, invited_at)
+		VALUES (?, ?, ?, 1, ?)
+		ON CONFLICT(event_id, user_id) DO UPDATE SET capacity = excluded.capacity, active = 1;
+	`, eventID, targetUserID, capacity, nowUTC)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Handle track eligibility: if no specific tracks provided, make eligible for all tracks in event
+	if len(trackIDs) == 0 {
+		tRows, err := s.db.QueryContext(r.Context(), "SELECT id FROM tracks WHERE event_id = ?;", eventID)
+		if err == nil {
+			defer tRows.Close()
+			for tRows.Next() {
+				var tid string
+				if err := tRows.Scan(&tid); err == nil {
+					trackIDs = append(trackIDs, tid)
+				}
+			}
+		}
+	}
+
+	for _, tid := range trackIDs {
+		_, _ = s.db.ExecContext(r.Context(), `
+			INSERT INTO judge_track_eligibility (event_id, judge_user_id, track_id, eligible, source, reason, updated_at)
+			VALUES (?, ?, ?, 1, 'organizer', 'Organizer assigned', ?)
+			ON CONFLICT(event_id, judge_user_id, track_id) DO UPDATE SET eligible = 1, updated_at = excluded.updated_at;
+		`, eventID, targetUserID, tid, nowUTC)
+	}
+
+	if isBrowserForm(r) {
+		http.Redirect(w, r, "/dashboard?msg=Judge+"+url.QueryEscape(displayName)+"+invited+successfully", http.StatusSeeOther)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":          "created",
+		"judge_user_id":   targetUserID,
+		"email":           normEmail,
+		"display_name":    displayName,
+		"capacity":        capacity,
+		"eligible_tracks": trackIDs,
+	})
+}
+
+// handleOrganizerUpdateJudgeEligibilityAPI updates capacity, active status, or track eligibility for a judge.
+func (s *Server) handleOrganizerUpdateJudgeEligibilityAPI(w http.ResponseWriter, r *http.Request) {
+	user := s.getCurrentUser(r)
+	if user == nil {
+		if !isBrowserForm(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			return
+		}
+		http.Redirect(w, r, "/login?error=Please+sign+in+first", http.StatusSeeOther)
+		return
+	}
+	if !canAdminister(user) {
+		if !isBrowserForm(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden"})
+			return
+		}
+		http.Redirect(w, r, "/dashboard?error=Organizer+privileges+required", http.StatusSeeOther)
+		return
+	}
+
+	judgeID := r.PathValue("id")
+	if judgeID == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	var eventID string
+	_ = s.db.QueryRowContext(r.Context(), "SELECT id FROM events ORDER BY created_at ASC LIMIT 1;").Scan(&eventID)
+
+	var capacity *int
+	var active *bool
+	var eligibleTrackIDs []string
+	hasEligibleTracks := false
+
+	contentType := r.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") {
+		var req struct {
+			Capacity *int      `json:"capacity"`
+			Active   *bool     `json:"active"`
+			Tracks   *[]string `json:"tracks"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			capacity = req.Capacity
+			active = req.Active
+			if req.Tracks != nil {
+				hasEligibleTracks = true
+				eligibleTrackIDs = *req.Tracks
+			}
+		}
+	} else {
+		_ = r.ParseForm()
+		if capStr := r.FormValue("capacity"); capStr != "" {
+			if c, err := strconv.Atoi(capStr); err == nil {
+				capacity = &c
+			}
+		}
+		if actStr := r.FormValue("active"); actStr != "" {
+			b := actStr == "1" || actStr == "true" || actStr == "on"
+			active = &b
+		}
+		if formTracks := r.Form["track_ids"]; len(formTracks) > 0 {
+			hasEligibleTracks = true
+			eligibleTrackIDs = formTracks
+		}
+	}
+
+	nowUTC := time.Now().UTC().Format(time.RFC3339)
+
+	// Update judge_profiles
+	if capacity != nil && *capacity >= 0 {
+		_, _ = s.db.ExecContext(r.Context(), `
+			UPDATE judge_profiles SET capacity = ? WHERE event_id = ? AND user_id = ?;
+		`, *capacity, eventID, judgeID)
+	}
+	if active != nil {
+		activeInt := 0
+		if *active {
+			activeInt = 1
+		}
+		_, _ = s.db.ExecContext(r.Context(), `
+			UPDATE judge_profiles SET active = ? WHERE event_id = ? AND user_id = ?;
+		`, activeInt, eventID, judgeID)
+	}
+
+	// Update eligibility if provided
+	if hasEligibleTracks {
+		_, _ = s.db.ExecContext(r.Context(), `
+			UPDATE judge_track_eligibility SET eligible = 0, updated_at = ? WHERE event_id = ? AND judge_user_id = ?;
+		`, nowUTC, eventID, judgeID)
+
+		for _, tid := range eligibleTrackIDs {
+			_, _ = s.db.ExecContext(r.Context(), `
+				INSERT INTO judge_track_eligibility (event_id, judge_user_id, track_id, eligible, source, reason, updated_at)
+				VALUES (?, ?, ?, 1, 'organizer', 'Organizer updated eligibility', ?)
+				ON CONFLICT(event_id, judge_user_id, track_id) DO UPDATE SET eligible = 1, updated_at = excluded.updated_at;
+			`, eventID, judgeID, tid, nowUTC)
+		}
+	}
+
+	if isBrowserForm(r) {
+		http.Redirect(w, r, "/dashboard?msg=Judge+updated+successfully", http.StatusSeeOther)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"status":        "updated",
+		"judge_user_id": judgeID,
+	})
+}
+
+// handleOrganizerCreateRubricAPI authors and publishes a new rubric version with customized weights.
+func (s *Server) handleOrganizerCreateRubricAPI(w http.ResponseWriter, r *http.Request) {
+	user := s.getCurrentUser(r)
+	if user == nil {
+		if !isBrowserForm(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+			return
+		}
+		http.Redirect(w, r, "/login?error=Please+sign+in+first", http.StatusSeeOther)
+		return
+	}
+	if !canAdminister(user) {
+		if !isBrowserForm(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: organizer role required"})
+			return
+		}
+		http.Redirect(w, r, "/dashboard?error=Organizer+privileges+required", http.StatusSeeOther)
+		return
+	}
+
+	var eventID string
+	_ = s.db.QueryRowContext(r.Context(), "SELECT id FROM events ORDER BY created_at ASC LIMIT 1;").Scan(&eventID)
+
+	var rubricID, trackID string
+	var criteria []judging.Criterion
+
+	contentType := r.Header.Get("Content-Type")
+	if strings.Contains(contentType, "application/json") {
+		var req struct {
+			RubricID string              `json:"rubric_id"`
+			TrackID  string              `json:"track_id"`
+			Criteria []judging.Criterion `json:"criteria"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid JSON payload: " + err.Error()})
+			return
+		}
+		rubricID = strings.TrimSpace(req.RubricID)
+		trackID = strings.TrimSpace(req.TrackID)
+		criteria = req.Criteria
+	} else {
+		_ = r.ParseForm()
+		rubricID = strings.TrimSpace(r.FormValue("rubric_id"))
+		trackID = strings.TrimSpace(r.FormValue("track_id"))
+
+		if criteriaJSON := r.FormValue("criteria_json"); criteriaJSON != "" {
+			if err := json.Unmarshal([]byte(criteriaJSON), &criteria); err != nil {
+				http.Redirect(w, r, "/dashboard?error=Invalid+criteria+JSON:+"+url.QueryEscape(err.Error()), http.StatusSeeOther)
+				return
+			}
+		} else {
+			critIDs := r.Form["crit_id"]
+			critNames := r.Form["crit_name"]
+			critDescs := r.Form["crit_desc"]
+			critMins := r.Form["crit_min"]
+			critMaxs := r.Form["crit_max"]
+			critWeights := r.Form["crit_weight"]
+
+			for i := range critIDs {
+				id := strings.TrimSpace(critIDs[i])
+				if id == "" {
+					continue
+				}
+				name := id
+				if i < len(critNames) && strings.TrimSpace(critNames[i]) != "" {
+					name = strings.TrimSpace(critNames[i])
+				}
+				desc := ""
+				if i < len(critDescs) {
+					desc = strings.TrimSpace(critDescs[i])
+				}
+				minVal := 0.0
+				if i < len(critMins) {
+					minVal, _ = strconv.ParseFloat(critMins[i], 64)
+				}
+				maxVal := 5.0
+				if i < len(critMaxs) {
+					if mv, err := strconv.ParseFloat(critMaxs[i], 64); err == nil && mv > 0 {
+						maxVal = mv
+					}
+				}
+				weight := 1.0
+				if i < len(critWeights) {
+					if w, err := strconv.ParseFloat(critWeights[i], 64); err == nil {
+						weight = w
+					}
+				}
+				criteria = append(criteria, judging.Criterion{
+					ID:          id,
+					Name:        name,
+					Description: desc,
+					MinScore:    minVal,
+					MaxScore:    maxVal,
+					Weight:      weight,
+					Required:    true,
+				})
+			}
+		}
+	}
+
+	if rubricID == "" {
+		rubricID = "default"
+	}
+
+	rubric, err := s.judgingService.CreateAndPublishRubric(r.Context(), eventID, rubricID, trackID, criteria, user.UserID)
+	if err != nil {
+		if !isBrowserForm(r) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		http.Redirect(w, r, "/dashboard?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
+		return
+	}
+
+	if isBrowserForm(r) {
+		http.Redirect(w, r, "/dashboard?msg=Rubric+version+v"+strconv.Itoa(rubric.VersionNo)+"+published+successfully", http.StatusSeeOther)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(rubric)
+}
