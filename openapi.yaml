@@ -447,6 +447,23 @@ paths:
         '403':
           description: Organizer role required.
 
+  /api/v1/organizer/results/recompute-publish:
+    post:
+      summary: Recompute and publish official results run
+      description: Atomically computes results from all submitted judge ballots and publishes the official public standings.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Results computed and published.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultRun'
+        '403':
+          description: Organizer role required.
+
   /api/v1/results/{run_id}/projects/{project_id}:
     get:
       summary: Get Explain-This-Rank receipt

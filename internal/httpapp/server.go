@@ -188,6 +188,12 @@ type DashboardData struct {
 	// Judge workspace
 	JudgeAssignments []judging.AssignmentDetail
 
+	// Results & Leaderboard status
+	ResultsPublished    bool
+	ActiveResultRunID   string
+	PendingBallotCount  int
+	DraftResultRunCount int
+
 	Message string
 	Error   string
 }
@@ -215,15 +221,20 @@ type ProjectDetailData struct {
 
 // ResultsData is passed to results.html template.
 type ResultsData struct {
-	EventName   string
-	EventID     string
-	Run         *results.ResultRun
-	Entries     []results.ResultEntry
-	Tracks      []TrackCount
-	User        *auth.Identity
-	IsOrganizer bool
-	Message     string
-	Error       string
+	EventName          string
+	EventID            string
+	Run                *results.ResultRun
+	Entries            []results.ResultEntry
+	Tracks             []TrackCount
+	User               *auth.Identity
+	IsOrganizer        bool
+	Message            string
+	Error              string
+	DraftRun           *results.ResultRun
+	IsDraftPreview     bool
+	HasPendingBallots  bool
+	PendingBallotCount int
+	HasPublishedRun    bool
 }
 
 // ExplainRankData is passed to explain_rank.html template.
@@ -431,6 +442,8 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /api/v1/organizer/results/compute", s.handleComputeResults)
 	mux.HandleFunc("POST /api/organizer/results/{id}/publish", s.handlePublishResults)
 	mux.HandleFunc("POST /api/v1/organizer/results/{id}/publish", s.handlePublishResults)
+	mux.HandleFunc("POST /api/organizer/results/recompute-publish", s.handleRecomputeAndPublishResults)
+	mux.HandleFunc("POST /api/v1/organizer/results/recompute-publish", s.handleRecomputeAndPublishResults)
 	mux.HandleFunc("GET /api/results", s.handleGetActiveResultsAPI)
 	mux.HandleFunc("GET /api/v1/results", s.handleGetActiveResultsAPI)
 	mux.HandleFunc("GET /api/results/{run_id}/projects/{project_id}", s.handleGetExplanationAPI)
@@ -1072,6 +1085,29 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM assignments WHERE event_id = ?;", data.EventID).Scan(&data.TotalAssignments)
 		_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM assignment_runs WHERE event_id = ?;", data.EventID).Scan(&data.AssignmentRunCount)
+
+		if s.resultsService != nil {
+			activeRun, _, err := s.resultsService.GetActiveResults(r.Context(), data.EventID)
+			if err == nil && activeRun != nil {
+				data.ActiveResultRunID = activeRun.ID
+				data.ResultsPublished = true
+				refTime := activeRun.CreatedAt
+				if activeRun.PublishedAt != nil && *activeRun.PublishedAt != "" {
+					refTime = *activeRun.PublishedAt
+				}
+				_ = s.db.QueryRowContext(r.Context(), `
+					SELECT COUNT(*) FROM ballot_versions b
+					JOIN assignments a ON b.assignment_id = a.id
+					WHERE a.event_id = ?
+					  AND b.save_kind IN ('SUBMISSION', 'SUBMITTED', 'CORRECTION')
+					  AND b.created_at > ?;
+				`, data.EventID, refTime).Scan(&data.PendingBallotCount)
+			} else {
+				var draftCount int
+				_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM result_runs WHERE event_id = ? AND status = 'DRAFT';", data.EventID).Scan(&draftCount)
+				data.DraftResultRunCount = draftCount
+			}
+		}
 	}
 
 	// Judge overview: fetch assigned projects
@@ -2553,6 +2589,7 @@ func (s *Server) handleEvaluationSubmit(w http.ResponseWriter, r *http.Request) 
 			http.Redirect(w, r, "/evaluations/"+assignmentID+"?error="+url.QueryEscape(err.Error()), http.StatusSeeOther)
 			return
 		}
+		s.syncResultsAfterBallot(r.Context(), detail.EventID, user.UserID)
 		http.Redirect(w, r, "/evaluations/"+assignmentID+"?msg="+url.QueryEscape("Evaluation submitted successfully. Ballot is permanently locked."), http.StatusSeeOther)
 		return
 	}
@@ -2703,6 +2740,10 @@ func (s *Server) handleSubmitBallotAPI(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
+
+	var eventID string
+	_ = s.db.QueryRowContext(r.Context(), "SELECT event_id FROM assignments WHERE id = ?;", assignmentID).Scan(&eventID)
+	s.syncResultsAfterBallot(r.Context(), eventID, id.UserID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -2922,24 +2963,73 @@ func (s *Server) handleResultsPage(w http.ResponseWriter, r *http.Request) {
 
 	var run *results.ResultRun
 	var entries []results.ResultEntry
+	var draftRun *results.ResultRun
+	var isDraftPreview bool
+	var hasPendingBallots bool
+	var pendingBallotCount int
+	var hasPublishedRun bool
+
+	previewParam := r.URL.Query().Get("preview")
+	viewParam := r.URL.Query().Get("view")
+	runIDParam := r.URL.Query().Get("run_id")
+	wantDraft := isOrganizer && (previewParam == "draft" || viewParam == "draft")
 
 	if s.resultsService != nil && eventID != "" {
 		activeRun, activeEntries, err := s.resultsService.GetActiveResults(r.Context(), eventID)
 		if err == nil && activeRun != nil {
-			run = activeRun
-			entries = activeEntries
-		} else if isOrganizer {
-			// If organizer, show latest draft run for preview
+			hasPublishedRun = true
+		}
+
+		// If organizer, check for latest DRAFT run
+		if isOrganizer {
 			var draftID string
 			_ = s.db.QueryRowContext(r.Context(), `
 				SELECT id FROM result_runs WHERE event_id = ? AND status = 'DRAFT' ORDER BY created_at DESC LIMIT 1;
 			`, eventID).Scan(&draftID)
 			if draftID != "" {
-				draftRun, err := s.resultsService.GetResultRunByID(r.Context(), draftID)
-				if err == nil && draftRun != nil {
-					run = draftRun
-					entries, _ = s.resultsService.ListEntriesForRun(r.Context(), draftID)
+				if dr, err := s.resultsService.GetResultRunByID(r.Context(), draftID); err == nil && dr != nil {
+					draftRun = dr
 				}
+			}
+		}
+
+		if runIDParam != "" && isOrganizer {
+			if specifiedRun, err := s.resultsService.GetResultRunByID(r.Context(), runIDParam); err == nil && specifiedRun != nil {
+				run = specifiedRun
+				entries, _ = s.resultsService.ListEntriesForRun(r.Context(), runIDParam)
+				if run.Status == results.StatusDraft {
+					isDraftPreview = true
+				}
+			}
+		} else if wantDraft && draftRun != nil {
+			run = draftRun
+			entries, _ = s.resultsService.ListEntriesForRun(r.Context(), draftRun.ID)
+			isDraftPreview = true
+		} else if activeRun != nil {
+			run = activeRun
+			entries = activeEntries
+		} else if isOrganizer && draftRun != nil {
+			// No published run yet, so organizer previews the draft run
+			run = draftRun
+			entries, _ = s.resultsService.ListEntriesForRun(r.Context(), draftRun.ID)
+			isDraftPreview = true
+		}
+
+		// Check for pending uncalculated ballots if we are displaying a published run
+		if run != nil && run.Status == results.StatusPublished {
+			refTime := run.CreatedAt
+			if run.PublishedAt != nil && *run.PublishedAt != "" {
+				refTime = *run.PublishedAt
+			}
+			_ = s.db.QueryRowContext(r.Context(), `
+				SELECT COUNT(*) FROM ballot_versions b
+				JOIN assignments a ON b.assignment_id = a.id
+				WHERE a.event_id = ?
+				  AND b.save_kind IN ('SUBMISSION', 'SUBMITTED', 'CORRECTION')
+				  AND b.created_at > ?;
+			`, eventID, refTime).Scan(&pendingBallotCount)
+			if pendingBallotCount > 0 {
+				hasPendingBallots = true
 			}
 		}
 	}
@@ -2966,15 +3056,20 @@ func (s *Server) handleResultsPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := ResultsData{
-		EventName:   eventName,
-		EventID:     eventID,
-		Run:         run,
-		Entries:     entries,
-		Tracks:      tracks,
-		User:        user,
-		IsOrganizer: isOrganizer,
-		Message:     r.URL.Query().Get("msg"),
-		Error:       r.URL.Query().Get("error"),
+		EventName:          eventName,
+		EventID:            eventID,
+		Run:                run,
+		Entries:            entries,
+		Tracks:             tracks,
+		User:               user,
+		IsOrganizer:        isOrganizer,
+		Message:            r.URL.Query().Get("msg"),
+		Error:              r.URL.Query().Get("error"),
+		DraftRun:           draftRun,
+		IsDraftPreview:     isDraftPreview,
+		HasPendingBallots:  hasPendingBallots,
+		PendingBallotCount: pendingBallotCount,
+		HasPublishedRun:    hasPublishedRun,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -3092,6 +3187,85 @@ func (s *Server) handlePublishResults(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(run)
+}
+
+func (s *Server) handleRecomputeAndPublishResults(w http.ResponseWriter, r *http.Request) {
+	id, err := auth.Authenticate(r.Context(), s.db, r)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
+		return
+	}
+	if !canAdminister(id) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden: organizer role required"})
+		return
+	}
+
+	var eventID string
+	_ = s.db.QueryRowContext(r.Context(), "SELECT id FROM events ORDER BY created_at ASC LIMIT 1;").Scan(&eventID)
+
+	newRun, err := s.resultsService.ComputeResults(r.Context(), eventID, id.UserID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	publishedRun, err := s.resultsService.PublishResults(r.Context(), newRun.ID, id.UserID)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(publishedRun)
+}
+
+// syncResultsAfterBallot is triggered when a judge submits/finalizes a score.
+// If official results have already been published, it automatically computes and publishes
+// a new superseding run so the public leaderboard immediately reflects the new score while
+// preserving full auditability and immutability (the old run is retired, not mutated).
+func (s *Server) syncResultsAfterBallot(ctx context.Context, eventID, callerUserID string) {
+	if s.resultsService == nil || eventID == "" {
+		return
+	}
+
+	// 1. Check if there is an active published result run for this event
+	var publishedID string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id FROM result_runs 
+		WHERE event_id = ? AND status = 'PUBLISHED' 
+		ORDER BY created_at DESC LIMIT 1;
+	`, eventID).Scan(&publishedID)
+
+	if err == nil && publishedID != "" {
+		// An official results publication is active!
+		// Automatically compute and publish a new superseding run so the public leaderboard
+		// immediately reflects the new score while preserving full auditability (the old run is retired, not mutated).
+		newRun, err := s.resultsService.ComputeResults(ctx, eventID, callerUserID)
+		if err == nil && newRun != nil {
+			_, _ = s.resultsService.PublishResults(ctx, newRun.ID, callerUserID)
+		}
+		return
+	}
+
+	// 2. If no published run exists, check if an unmerged draft run was previously computed
+	var draftID string
+	err = s.db.QueryRowContext(ctx, `
+		SELECT id FROM result_runs 
+		WHERE event_id = ? AND status = 'DRAFT' 
+		ORDER BY created_at DESC LIMIT 1;
+	`, eventID).Scan(&draftID)
+	if err == nil && draftID != "" {
+		_, _ = s.resultsService.ComputeResults(ctx, eventID, callerUserID)
+	}
 }
 
 func (s *Server) handleGetActiveResultsAPI(w http.ResponseWriter, r *http.Request) {

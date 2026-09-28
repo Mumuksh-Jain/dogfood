@@ -1,31 +1,29 @@
 # STATE
 
 ## Current phase
-T2 JUDGING: CHECKPOINT 5 (AUDITABLE CSV EXPORT & API-FIRST CONSISTENCY) COMPLETE
+T2 JUDGING: OFFLINE-FIRST RUNTIME PROOF & COMPLETE VERIFICATION
 
 ## Last checkpoint passed
-T2 Checkpoint 5: Auditable CSV Export & API-First Consistency implemented and verified:
-- Defensible CSV export in `internal/httpapp/csv_export.go` supporting:
-  - Default standings export (`/api/export.csv`, `/api/v1/export.csv`, `/api/v1/export/results.csv`): 17 stable reconciliation columns (`rank,project_id,title,team_id,team_name,track_id,track_name,final_score,raw_score,expected_reviews,completed_reviews,effective_reviews,fallback_count,tie_group,result_run_id,input_digest,published_at`).
-  - Evaluations export (`/api/export/evaluations.csv`, `/api/v1/export/evaluations.csv`, `?type=evaluations`): 11 audit columns (`assignment_id,ballot_id,project_id,project_title,judge_user_id,judge_name,rubric_version_id,save_kind,scores,comment,created_at`).
-  - Projects export (`/api/export/projects.csv`, `/api/v1/export/projects.csv`, `?type=projects`): project submissions with stable identifiers.
-  - Clean project fallback if results run has not been computed yet, ensuring unconditional official acceptance test compatibility.
-- Spreadsheet Formula Injection Defense (Failure Case F21):
-  - `sanitizeCSVField` prefixes cells starting with formula triggers (`=`, `+`, `-`, `@`, `\t`, `\r`) with single quote (`'`), while preserving valid numbers.
-- Strict Role Isolation:
-  - Anonymous callers receive `401 Unauthorized`.
-  - Non-admin personas (participants, judges) receive `403 Forbidden`.
-  - Organizers and admins receive `200 OK` with `Content-Type: text/csv; charset=utf-8` and RFC 2616 `Content-Disposition: attachment`.
-- API-First Consistency (Prompt 26):
-  - Unified `/api/v1/...` routes in `internal/httpapp/server.go` sharing exact same service handlers and authorization checks as HTML routes.
-  - Implemented `GET /api/v1/projects` and `GET /api/v1/teams`.
-  - Authored valid, comprehensive `openapi.yaml` at repository root documenting all 32 implemented endpoints with zero docs-only imaginary routes.
-- Automated Tests:
-  - `internal/httpapp/csv_export_test.go`: `TestSanitizeCSVField_F21`, `TestCSVExport_AuthorizationAndFormat`, `TestCSVExport_Evaluations`, `TestCSVExport_ResultsPublishedWithFormulaSanitization`, `TestAPIFirst_Consistency`.
-  - `internal/httpapp/human_acceptance_test.go`: `TestHumanAcceptance_FlowI_CSVExport_And_APIFirst` (Flow I).
-  - Full repo test suite `go test -count=1 ./...` PASS.
-- Container runtime verified: `docker compose build` and live HTTP probes passing.
-- Official acceptance runner `python official/run.py .dogfood.toml`: 7/7 PASS (`claimed T1 T2, verified T1 T2`).
+Checkpoint 15: Offline-First Requirement & Complete Network-Isolated Verification
+- Mandatory Offline-First Audit:
+  - Scanned all codebase files: 0 external CDNs, 0 Google Fonts, 0 external CSS/JS imports, 0 remote analytics, 0 third-party auth, 0 external databases, 0 remote scoring services.
+  - All UI templates (`web/templates/*.html`) and stylesheets (`web/static/app.css`) are embedded directly into the Go executable via `embed.FS`.
+  - The production Docker image uses `FROM scratch`, containing only `/dogfood` and `/official/fixtures.json`.
+- Live Network-Isolated Docker Proof:
+  - Created Docker internal network `dogfood_offline_test` with `--internal` flag (completely blocking all internet and WAN egress).
+  - Proved outbound connectivity unreachable: `ping 8.8.8.8` returns `Network unreachable`; external DNS/HTTP requests fail with `[Errno 101] Network is unreachable`.
+  - Executed full 14-step offline browser and workflow test suite from an attached container:
+    - Public pages (`/`, `/projects`, `/projects/prj_01`, `/login`): 200 OK, zero external assets.
+    - Organizer workflows (assignments, results compute, results publish): 200 OK.
+    - Participant workflows (`/dashboard`, team view, 403 authorization guards): 200/403 OK.
+    - Judge workflows (evaluation, draft, finalization, 409 ballot immutability lock): 200/409 OK.
+    - Peer isolation (Judge B blocked from Judge A evaluation and peer score API): 403 Forbidden.
+    - Results freshness & public leaderboard (`/results`, `/api/results`): 200 OK.
+    - Explain This Rank receipt (`/results/{run_id}/projects/{project_id}`): 200 OK.
+    - Auditable CSV export (`/api/export.csv`): 401 anon, 403 participant, 200 organizer with RFC 4180 and F21 formula sanitization.
+    - REST API v1 parity (`/api/v1/projects`, `/api/v1/teams`): 200 OK.
+  - Executed independent CLI replay inside isolated container: `100% Mathematical Equality Verified`.
+  - Executed official test runner (`official/run.py`) on `--internal` network: 7/7 PASS (`claimed T1 T2, verified T1 T2`).
 
 ## Current blocker
 none
@@ -41,7 +39,7 @@ T2  csv export works .................. PASS
 claimed T1 T2, verified T1 T2
 
 ## Next action
-Review T2 Checkpoint 5 report. Human controls Git. Ready for final pre-freeze reviews, documentation polish, or tagging if requested.
+Ready for final review, commit, and push. Human controls Git.
 
 ## Known deltas since H0
 None.

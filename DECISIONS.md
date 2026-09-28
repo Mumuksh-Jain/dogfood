@@ -842,7 +842,56 @@ While automated acceptance suites (`run.py`) verify API endpoints, human users i
 | **Checker** | T2: Participant blocked | `python official/run.py .dogfood.toml` | **PASS** (HTTP 403) |
 | **Checker** | T2: CSV export works | `python official/run.py .dogfood.toml` | **PASS** (HTTP 200, comma header) |
 | **Checker** | Full Acceptance Suite | `python official/run.py .dogfood.toml` | **PASS** (`claimed T1 T2, verified T1 T2`) |
+| **QA E2E** | Live QA Walkthrough (16 checks) | `python scratch/qa_walkthrough.py` | **PASS** (All 4 roles, fresh results lifecycle, replay) |
+| **Regression** | Judge score update updates leaderboard | `TestHumanAcceptance_JudgeScoreUpdate_UpdatesLeaderboard` | **PASS** (Immediate freshness + immutable retirement) |
+| **Docker CLI** | Replay new published run | `docker exec dogfood-dogfood-1 /dogfood replay <new_id>` | **PASS** (100% Equality) |
+| **Docker CLI** | Replay old retired run | `docker exec dogfood-dogfood-1 /dogfood replay <old_id>` | **PASS** (100% Equality, immutability verified) |
+| **Offline E2E** | Network-isolated runtime test | `docker run --network dogfood_offline_test ...` | **PASS** (All 14 workflows pass with external network unreachable) |
+| **Offline Checker** | Official runner with zero internet | `official/run.py` on `--internal` docker network | **PASS** (7/7 PASS: `claimed T1 T2, verified T1 T2`) |
+| **Offline Replay** | Independent CLI replay in isolated container | `docker exec dogfood_offline_probe /dogfood replay` | **PASS** (100% Mathematical Equality Verified) |
 
+---
+
+### Checkpoint 14 — Results Freshness Lifecycle & Comprehensive QA Audit
+
+#### Challenge 14.1 — Leaderboard Freshness & Publication Supersession Invariant
+* **Root Cause**:
+  1. **Stale Run Selection**: In `handleResultsPage`, `GetActiveResults` returned the published run. If an organizer recomputed results, a `DRAFT` run was inserted, but `handleResultsPage` selected draft runs only inside an `else if isOrganizer` branch that only evaluated if `activeRun == nil`. Thus, once any run was published, newer draft computations were completely hidden from organizers, and no publish button was rendered for the draft.
+  2. **Lack of Lifecycle Hook on Score Finalization**: When a judge submitted a ballot (`SubmitBallot`), no recomputation was triggered. The active published run continued pointing to historical snapshots.
+  3. **Missing Staleness Visibility**: The system did not check whether ballots existed that postdated the published run's `published_at` timestamp.
+* **Solution**:
+  1. **Automatic Supersession During Active Publication**: Implemented `syncResultsAfterBallot` in `internal/httpapp/server.go`. When a ballot is submitted via UI or API: if official results are active, it automatically calls `ComputeResults` and `PublishResults`, creating a new superseding run (`status = 'PUBLISHED'`), retiring the old run (`status = 'RETIRED'`), and updating `supersedes_result_run_id`.
+  2. **Auditability & Immutability Preserved**: The old run is NEVER mutated; its row and `result_entries` remain permanently preserved. Both old and new runs independently verify with 100% mathematical match via `dogfood replay`.
+  3. **Explicit Organizer Draft Preview & Staleness Detection**:
+     - `handleResultsPage` checks `preview=draft` and query parameter `run_id`, allowing organizers to inspect drafts.
+     - Calculates `PendingBallotCount` (ballots submitted after publication timestamp). If pending ballots exist, displays a prominent warning banner with a 1-click `[Recompute & Publish Standings Now]` button.
+     - Added atomic `POST /api/organizer/results/recompute-publish` and `/api/v1/organizer/results/recompute-publish`.
+  4. **Responsive Table & Mobile Audit**: Wrapped `.leaderboard-table` in an `overflow-x: auto` container to prevent mobile viewport distortion.
+
+---
+
+### Checkpoint 15 — Offline-First Verification & Network Isolation Proof
+
+#### Challenge 15.1 — Strict Zero-Runtime-Dependency Enforcement
+* **Requirement**: The application must operate fully without internet access at runtime. No runtime request may query external CDNs, Google Fonts, remote stylesheets/scripts, image hosts, third-party analytics, remote auth, or remote database services.
+* **Audit & Findings**:
+  1. **Zero External Frontend Dependencies**: All stylesheets (`web/static/app.css`) and templates (`web/templates/*.html`) are embedded directly into the executable via Go `embed.FS`. The CSS relies entirely on system font stacks (`-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto...`) with zero `@import` or Google Fonts. All scripts and modals use native vanilla JS and HTML5 `<dialog>`.
+  2. **Zero Outbound HTTP Clients**: In the entire Go codebase, `http.Client` is only used for the local `/healthz` container readiness probe (`http://127.0.0.1:8080/healthz`).
+  3. **Zero Runtime Image Dependencies**: The production Docker image uses `FROM scratch`, containing only the precompiled static binary (`/dogfood`) and `/official/fixtures.json`.
+* **Network-Isolated Docker Verification**:
+  1. Created a dedicated Docker internal network `dogfood_offline_test` using `--internal` (disallowing all WAN egress and internet routing).
+  2. Verified outbound network unreachability: `ping 8.8.8.8` returns `Network unreachable`; HTTP requests to external domains fail with `Temporary failure in name resolution` / `[Errno 101] Network is unreachable`.
+  3. Ran the containerized application on this isolated network and executed the complete test suite from an attached container:
+     - Public routes (`/`, `/projects`, `/projects/prj_01`, `/login`) returned HTTP 200 with zero external assets.
+     - Organizer workflows (assignment engine, compute draft, publish standings) executed smoothly.
+     - Participant workflows (`/dashboard`, team views, 403 authorization isolation) verified.
+     - Judge A/B workflows (peer isolation 403, draft/submit, ballot lock 409) verified.
+     - Leaderboard freshness and `/api/results` verified.
+     - "Explain This Rank" audit receipt verified.
+     - CSV export (`/api/export.csv`) verified with formula injection defense (F21).
+     - REST API v1 parity (`/api/v1/projects`, `/api/v1/teams`) verified.
+     - Independent CLI replay (`/dogfood replay`) inside the isolated container verified with 100% mathematical equality.
+     - Official acceptance test harness (`official/run.py`) executed in the isolated container: 7/7 PASS (`claimed T1 T2, verified T1 T2`).
 
 ---
 
@@ -853,3 +902,5 @@ While automated acceptance suites (`run.py`) verify API endpoints, human users i
 3. **Always use parameterized queries**: Avoid string interpolation in SQL statements to prevent syntax errors and SQL injection.
 4. **Maintain State**: Update [`prep/STATE.md`](file:///C:/Users/Administrator/Downloads/dogfood/prep/STATE.md) after passing any verification gate.
 5. **Git Control**: Never commit or push autonomously. Always report suggested commit messages to the human developer.
+
+

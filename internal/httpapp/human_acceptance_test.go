@@ -1602,4 +1602,242 @@ func TestHumanAcceptance_FlowI_CSVExport_And_APIFirst(t *testing.T) {
 	}
 }
 
+// TestHumanAcceptance_JudgeScoreUpdate_UpdatesLeaderboard tests the full end-to-end lifecycle:
+// A judge submits/finalizes a score -> result lifecycle supersedes published run ->
+// public leaderboard at /results, API, CSV, Explain-This-Rank, and Replay immediately reflect the updated score.
+func TestHumanAcceptance_JudgeScoreUpdate_UpdatesLeaderboard(t *testing.T) {
+	db := setupSeededDB(t)
+	server, err := NewServer(Config{Port: 8080, DB: db})
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	handler := server.Handler()
+
+	// 1. Organizer logs in
+	loginOrg := url.Values{"demo_user": {"organizer"}}.Encode()
+	reqLogO := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(loginOrg))
+	reqLogO.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrLogO := httptest.NewRecorder()
+	handler.ServeHTTP(rrLogO, reqLogO)
+	cookieOrg := rrLogO.Result().Cookies()[0]
+
+	// 2. Organizer runs assignments
+	assignBody := `{"max_assignments_per_judge": 5}`
+	reqAssign := httptest.NewRequest(http.MethodPost, "/api/organizer/assignments/run", strings.NewReader(assignBody))
+	reqAssign.AddCookie(cookieOrg)
+	rrAssign := httptest.NewRecorder()
+	handler.ServeHTTP(rrAssign, reqAssign)
+	if rrAssign.Code != http.StatusOK && rrAssign.Code != http.StatusSeeOther {
+		t.Fatalf("assignment run failed: %d", rrAssign.Code)
+	}
+
+	// 3. Organizer computes and publishes initial results run
+	reqCompute := httptest.NewRequest(http.MethodPost, "/api/organizer/results/compute", nil)
+	reqCompute.AddCookie(cookieOrg)
+	rrCompute := httptest.NewRecorder()
+	handler.ServeHTTP(rrCompute, reqCompute)
+	if rrCompute.Code != http.StatusOK {
+		t.Fatalf("compute draft failed: %d", rrCompute.Code)
+	}
+	var initialDraft struct {
+		ID          string `json:"id"`
+		InputDigest string `json:"input_digest"`
+	}
+	_ = json.NewDecoder(rrCompute.Body).Decode(&initialDraft)
+
+	reqPublish := httptest.NewRequest(http.MethodPost, "/api/organizer/results/"+initialDraft.ID+"/publish", nil)
+	reqPublish.AddCookie(cookieOrg)
+	rrPublish := httptest.NewRecorder()
+	handler.ServeHTTP(rrPublish, reqPublish)
+	if rrPublish.Code != http.StatusOK {
+		t.Fatalf("publish initial results failed: %d", rrPublish.Code)
+	}
+
+	// 4. Verify initial public leaderboard shows official results
+	reqPubInit := httptest.NewRequest(http.MethodGet, "/results", nil)
+	rrPubInit := httptest.NewRecorder()
+	handler.ServeHTTP(rrPubInit, reqPubInit)
+	if rrPubInit.Code != http.StatusOK {
+		t.Fatalf("initial /results failed: %d", rrPubInit.Code)
+	}
+	if !strings.Contains(rrPubInit.Body.String(), "Official Results Published") {
+		t.Fatalf("expected Official Results Published on initial /results")
+	}
+
+	// 5. Judge A logs in
+	loginJudge := url.Values{"demo_user": {"judge_a"}}.Encode()
+	reqLogJ := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(loginJudge))
+	reqLogJ.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rrLogJ := httptest.NewRecorder()
+	handler.ServeHTTP(rrLogJ, reqLogJ)
+	cookieJudge := rrLogJ.Result().Cookies()[0]
+
+	// Find Judge A's assignment
+	var assignmentID, projectID string
+	err = db.QueryRow(`
+		SELECT id, project_id FROM assignments 
+		WHERE judge_user_id = 'jdg_01' AND status != 'COMPLETED'
+		ORDER BY id ASC LIMIT 1;
+	`).Scan(&assignmentID, &projectID)
+	if err != nil {
+		t.Fatalf("no pending assignment found for judge_a: %v", err)
+	}
+
+	// 6. Judge A submits evaluation via HTML form with distinct scores (4.5, 4.5, 5.0, 5.0)
+	formVals := url.Values{
+		"action":                {"submit"},
+		"criterion_functionality": {"4.5"},
+		"criterion_quality":       {"4.5"},
+		"criterion_innovation":    {"5.0"},
+		"criterion_impact":        {"5.0"},
+		"comment":               {"Outstanding architecture and clean execution."},
+	}
+	reqEvalSubmit := httptest.NewRequest(http.MethodPost, "/evaluations/"+assignmentID, strings.NewReader(formVals.Encode()))
+	reqEvalSubmit.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqEvalSubmit.AddCookie(cookieJudge)
+	rrEvalSubmit := httptest.NewRecorder()
+	handler.ServeHTTP(rrEvalSubmit, reqEvalSubmit)
+	if rrEvalSubmit.Code != http.StatusSeeOther {
+		t.Fatalf("expected redirect 303 after evaluation submit, got %d", rrEvalSubmit.Code)
+	}
+
+	// 7. Verify ballot is locked — duplicate submission rejected
+	reqDupSubmit := httptest.NewRequest(http.MethodPost, "/evaluations/"+assignmentID, strings.NewReader(formVals.Encode()))
+	reqDupSubmit.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqDupSubmit.AddCookie(cookieJudge)
+	rrDupSubmit := httptest.NewRecorder()
+	handler.ServeHTTP(rrDupSubmit, reqDupSubmit)
+	if rrDupSubmit.Code != http.StatusSeeOther || !strings.Contains(rrDupSubmit.Header().Get("Location"), "error=") {
+		t.Errorf("expected error redirect on resubmitting locked ballot, got %d", rrDupSubmit.Code)
+	}
+
+	// 8. Public stranger checks /results — MUST reflect the new score and new published run!
+	reqPubNew := httptest.NewRequest(http.MethodGet, "/results", nil)
+	rrPubNew := httptest.NewRecorder()
+	handler.ServeHTTP(rrPubNew, reqPubNew)
+	if rrPubNew.Code != http.StatusOK {
+		t.Fatalf("updated /results failed: %d", rrPubNew.Code)
+	}
+	newResultsHTML := rrPubNew.Body.String()
+	if !strings.Contains(newResultsHTML, "Official Results Published") {
+		t.Errorf("expected Official Results Published badge after update")
+	}
+	// The new run should not have the old run ID as the active header
+	if strings.Contains(newResultsHTML, "Run ID: <code style=\"font-family: var(--font-mono);\">"+initialDraft.ID+"</code>") {
+		t.Errorf("stale run ID %s still displayed on /results leaderboard!", initialDraft.ID)
+	}
+
+	// 9. Public API GET /api/results returns updated run
+	reqAPINew := httptest.NewRequest(http.MethodGet, "/api/results", nil)
+	rrAPINew := httptest.NewRecorder()
+	handler.ServeHTTP(rrAPINew, reqAPINew)
+	if rrAPINew.Code != http.StatusOK {
+		t.Fatalf("/api/results failed: %d", rrAPINew.Code)
+	}
+	var newAPIData struct {
+		Run struct {
+			ID                    string  `json:"id"`
+			Status                string  `json:"status"`
+			SupersedesResultRunID *string `json:"supersedes_result_run_id"`
+			InputDigest           string  `json:"input_digest"`
+		} `json:"run"`
+		Entries []struct {
+			ProjectID  string  `json:"project_id"`
+			FinalScore float64 `json:"final_score"`
+		} `json:"entries"`
+	}
+	if err := json.NewDecoder(rrAPINew.Body).Decode(&newAPIData); err != nil {
+		t.Fatalf("decode new api results: %v", err)
+	}
+	if newAPIData.Run.ID == initialDraft.ID {
+		t.Errorf("active run ID did not update after ballot submission")
+	}
+	if newAPIData.Run.SupersedesResultRunID == nil || *newAPIData.Run.SupersedesResultRunID != initialDraft.ID {
+		t.Errorf("expected new run to supersede %s, got %+v", initialDraft.ID, newAPIData.Run.SupersedesResultRunID)
+	}
+	if newAPIData.Run.InputDigest == initialDraft.InputDigest {
+		t.Errorf("input digest did not change after new ballot submission")
+	}
+
+	// 10. CSV export reflects updated run
+	reqCSV := httptest.NewRequest(http.MethodGet, "/api/v1/export.csv", nil)
+	reqCSV.AddCookie(cookieOrg)
+	rrCSV := httptest.NewRecorder()
+	handler.ServeHTTP(rrCSV, reqCSV)
+	if rrCSV.Code != http.StatusOK {
+		t.Fatalf("csv export failed: %d", rrCSV.Code)
+	}
+	csvBody := rrCSV.Body.String()
+	if !strings.Contains(csvBody, newAPIData.Run.ID) {
+		t.Errorf("exported CSV does not reference new run %s", newAPIData.Run.ID)
+	}
+
+	// 11. Explain This Rank page renders for updated project
+	explainURL := fmt.Sprintf("/results/%s/projects/%s", newAPIData.Run.ID, projectID)
+	reqExp := httptest.NewRequest(http.MethodGet, explainURL, nil)
+	rrExp := httptest.NewRecorder()
+	handler.ServeHTTP(rrExp, reqExp)
+	if rrExp.Code != http.StatusOK {
+		t.Fatalf("explain rank page %s failed: %d", explainURL, rrExp.Code)
+	}
+	if !strings.Contains(rrExp.Body.String(), newAPIData.Run.ID) {
+		t.Errorf("explain rank page does not reference new run ID")
+	}
+
+	// 12. Independent replay of new run succeeds with 100% mathematical equality
+	reqReplayNew := httptest.NewRequest(http.MethodGet, "/api/v1/results/"+newAPIData.Run.ID+"/replay", nil)
+	rrReplayNew := httptest.NewRecorder()
+	handler.ServeHTTP(rrReplayNew, reqReplayNew)
+	if rrReplayNew.Code != http.StatusOK {
+		t.Fatalf("replay new run failed: %d", rrReplayNew.Code)
+	}
+	var repNew struct {
+		Passed bool `json:"passed"`
+	}
+	_ = json.NewDecoder(rrReplayNew.Body).Decode(&repNew)
+	if !repNew.Passed {
+		t.Errorf("independent replay of new run failed")
+	}
+
+	// 13. Independent replay of OLD retired run STILL succeeds (hard immutability)
+	reqReplayOld := httptest.NewRequest(http.MethodGet, "/api/v1/results/"+initialDraft.ID+"/replay", nil)
+	rrReplayOld := httptest.NewRecorder()
+	handler.ServeHTTP(rrReplayOld, reqReplayOld)
+	if rrReplayOld.Code != http.StatusOK {
+		t.Fatalf("replay old run failed: %d", rrReplayOld.Code)
+	}
+	var repOld struct {
+		Passed bool `json:"passed"`
+	}
+	_ = json.NewDecoder(rrReplayOld.Body).Decode(&repOld)
+	if !repOld.Passed {
+		t.Errorf("independent replay of old retired run failed; was data mutated?")
+	}
+
+	// 14. Verify old run status is RETIRED in database
+	var oldStatus string
+	_ = db.QueryRow("SELECT status FROM result_runs WHERE id = ?;", initialDraft.ID).Scan(&oldStatus)
+	if oldStatus != "RETIRED" {
+		t.Errorf("expected old run status to be RETIRED, got %s", oldStatus)
+	}
+
+	// 15. Organizer One-Click Recompute & Publish API
+	reqRecomputePub := httptest.NewRequest(http.MethodPost, "/api/v1/organizer/results/recompute-publish", nil)
+	reqRecomputePub.AddCookie(cookieOrg)
+	rrRecomputePub := httptest.NewRecorder()
+	handler.ServeHTTP(rrRecomputePub, reqRecomputePub)
+	if rrRecomputePub.Code != http.StatusOK {
+		t.Fatalf("recompute-publish endpoint failed: %d, body: %s", rrRecomputePub.Code, rrRecomputePub.Body.String())
+	}
+	var thirdRun struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+	}
+	_ = json.NewDecoder(rrRecomputePub.Body).Decode(&thirdRun)
+	if thirdRun.Status != "PUBLISHED" {
+		t.Errorf("expected published status from recompute-publish, got %s", thirdRun.Status)
+	}
+}
+
+
 

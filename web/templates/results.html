@@ -14,7 +14,11 @@
                 <span class="event-name">{{if .EventName}}{{.EventName}}{{else}}Hackathon{{end}}</span>
                 {{if .Run}}
                     {{if eq .Run.Status "PUBLISHED"}}
-                    <span class="status-badge status-open">● Official Results Published</span>
+                        {{if .HasPendingBallots}}
+                        <span class="status-badge" style="background:#fff3cd; color:#856404; border-color:#ffeeba;">● Official Published ({{.PendingBallotCount}} new ballots)</span>
+                        {{else}}
+                        <span class="status-badge status-open">● Official Results Published</span>
+                        {{end}}
                     {{else}}
                     <span class="status-badge" style="background:#fff3cd; color:#856404; border-color:#ffeeba;">● Draft Results Preview</span>
                     {{end}}
@@ -68,10 +72,17 @@
                     <a href="/api/v1/export.csv" class="btn btn-secondary" download>
                         ⬇ Export Standings (CSV)
                     </a>
-                    {{if eq .Run.Status "DRAFT"}}
+                    {{if .IsDraftPreview}}
                     <button type="button" class="btn btn-primary" onclick="publishResults('{{.Run.ID}}')">Publish Official Results</button>
+                    {{if .HasPublishedRun}}
+                    <a href="/results" class="btn btn-secondary">View Published Standings</a>
+                    {{end}}
                     {{else}}
-                    <button type="button" class="btn btn-secondary" onclick="computeResults()">Recompute New Run</button>
+                    <button type="button" class="btn btn-primary" onclick="recomputeAndPublish()">Recompute &amp; Publish</button>
+                    <button type="button" class="btn btn-secondary" onclick="computeDraftResults()">Compute Draft</button>
+                    {{if and .DraftRun (ne .DraftRun.ID .Run.ID)}}
+                    <a href="/results?preview=draft" class="btn btn-secondary">View Draft ({{.DraftRun.ID}})</a>
+                    {{end}}
                     {{end}}
                 {{end}}
             </div>
@@ -79,6 +90,32 @@
 
         <!-- Replay verification result banner -->
         <div id="replay-banner" style="display: none; margin-bottom: 1.5rem;"></div>
+
+        {{if .HasPendingBallots}}
+        <!-- Stale Results Warning Banner -->
+        <div style="background: #fff3cd; border: 1.5px solid #ffeeba; border-radius: var(--radius-md); padding: 1rem 1.25rem; color: #856404; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+            <div>
+                <div style="font-weight: 800; font-size: 1rem; margin-bottom: 0.2rem;">⚠️ Stale Standings Warning</div>
+                <div style="font-size: 0.85rem;">{{.PendingBallotCount}} new judge evaluation(s) were submitted after this official run was published.</div>
+            </div>
+            {{if .IsOrganizer}}
+            <button type="button" class="btn-sm btn-primary" onclick="recomputeAndPublish()">Recompute &amp; Publish Standings Now</button>
+            {{end}}
+        </div>
+        {{end}}
+
+        {{if .IsDraftPreview}}
+        <!-- Draft Preview Notice -->
+        <div style="background: #e8f4fd; border: 1.5px solid #bee5eb; border-radius: var(--radius-md); padding: 1rem 1.25rem; color: #0c5460; margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+            <div>
+                <div style="font-weight: 800; font-size: 1rem; margin-bottom: 0.2rem;">Draft Results Preview (Run ID: {{.Run.ID}})</div>
+                <div style="font-size: 0.85rem;">Previewing unpublished draft results calculated from submitted judge ballots. Visible only to organizers.</div>
+            </div>
+            {{if .HasPublishedRun}}
+            <a href="/results" class="btn-sm btn-secondary">Switch to Published Leaderboard</a>
+            {{end}}
+        </div>
+        {{end}}
 
         <!-- Audit & Methodology Callout -->
         <div class="audit-callout">
@@ -154,6 +191,7 @@
                 </div>
             </div>
 
+            <div style="overflow-x: auto; -webkit-overflow-scrolling: touch; margin-top: 0.5rem;">
             <table class="leaderboard-table" id="leaderboard-table">
                 <thead>
                     <tr>
@@ -211,6 +249,7 @@
                     {{end}}
                 </tbody>
             </table>
+            </div>
         </div>
         {{end}}
     </main>
@@ -272,13 +311,28 @@
         }
     }
 
-    async function computeResults() {
-        if (!confirm('Compute results now from all completed judge ballots?')) return;
+    async function recomputeAndPublish() {
+        if (!confirm('Recompute competition results from all submitted judge ballots and publish as the official public standings?')) return;
+        try {
+            const resp = await fetch('/api/organizer/results/recompute-publish', { method: 'POST' });
+            const data = await resp.json();
+            if (resp.ok) {
+                window.location.href = '/results';
+            } else {
+                alert('Publication error: ' + (data.error || 'Failed'));
+            }
+        } catch (err) {
+            alert('Request failed: ' + err.message);
+        }
+    }
+
+    async function computeDraftResults() {
+        if (!confirm('Compute draft results preview from current submitted judge ballots?')) return;
         try {
             const resp = await fetch('/api/organizer/results/compute', { method: 'POST' });
             const data = await resp.json();
             if (resp.ok) {
-                window.location.reload();
+                window.location.href = '/results?preview=draft';
             } else {
                 alert('Computation error: ' + (data.error || 'Failed'));
             }
@@ -287,13 +341,17 @@
         }
     }
 
+    async function computeResults() {
+        return computeDraftResults();
+    }
+
     async function publishResults(runID) {
         if (!confirm('Publish this run as the official public results? This freezes the run immutably.')) return;
         try {
             const resp = await fetch('/api/organizer/results/' + runID + '/publish', { method: 'POST' });
             const data = await resp.json();
             if (resp.ok) {
-                window.location.reload();
+                window.location.href = '/results';
             } else {
                 alert('Publication error: ' + (data.error || 'Failed'));
             }

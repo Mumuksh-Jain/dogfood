@@ -370,14 +370,28 @@
             <div id="results-management" style="margin-top: 1rem;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 0.75rem; flex-wrap: wrap; gap: 0.5rem;">
                     <div>
-                        <h4 style="margin: 0;">Results &amp; Defensible Scoring</h4>
-                        <p class="subtitle" style="margin: 0; font-size: 0.85rem;">Standardize judge scores, inspect Explain-This-Rank receipts, and publish official standings.</p>
+                        <div style="display: flex; align-items: center; gap: 0.6rem;">
+                            <h4 style="margin: 0;">Results &amp; Defensible Scoring</h4>
+                            {{if .ResultsPublished}}
+                                {{if gt .PendingBallotCount 0}}
+                                <span class="status-badge" style="background:#fff3cd; color:#856404; border-color:#ffeeba;">● Published (Stale: {{.PendingBallotCount}} new ballots)</span>
+                                {{else}}
+                                <span class="status-badge status-open">● Published ({{.ActiveResultRunID}})</span>
+                                {{end}}
+                            {{else if gt .DraftResultRunCount 0}}
+                            <span class="status-badge" style="background:#fff3cd; color:#856404; border-color:#ffeeba;">● Draft Computed (Unpublished)</span>
+                            {{else}}
+                            <span class="status-badge status-closed">● Not Computed Yet</span>
+                            {{end}}
+                        </div>
+                        <p class="subtitle" style="margin: 0.25rem 0 0; font-size: 0.85rem;">Standardize judge scores, inspect Explain-This-Rank receipts, and publish official standings.</p>
                     </div>
                     <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
                         <a href="/api/v1/export.csv" class="btn-sm btn-outline" download>⬇ Standings CSV</a>
                         <a href="/api/v1/export/evaluations.csv" class="btn-sm btn-outline" download>⬇ Ballots CSV</a>
                         <a href="/results" class="btn-sm btn-outline">Open Leaderboard ↗</a>
-                        <button type="button" class="btn-sm btn-primary" onclick="computeResultsDraft()">Compute Results</button>
+                        <button type="button" class="btn-sm btn-primary" onclick="recomputeAndPublish()">Recompute &amp; Publish</button>
+                        <button type="button" class="btn-sm btn-secondary" onclick="computeResultsDraft()">Compute Draft Preview</button>
                     </div>
                 </div>
             </div>
@@ -765,14 +779,28 @@
         }
 
         function computeResultsDraft() {
-            if (!confirm('Compute competition results from all submitted judge ballots?')) return;
+            if (!confirm('Compute draft competition results from all submitted judge ballots?')) return;
             fetch('/api/organizer/results/compute', { method: 'POST' })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.id) {
+                        window.location.href = '/results?preview=draft';
+                    } else {
+                        alert('Compute error: ' + (data.error || 'Failed'));
+                    }
+                })
+                .catch(err => alert('Request failed: ' + err.message));
+        }
+
+        function recomputeAndPublish() {
+            if (!confirm('Recompute results from all submitted judge ballots and publish official public standings?')) return;
+            fetch('/api/organizer/results/recompute-publish', { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
                     if (data.id) {
                         window.location.href = '/results';
                     } else {
-                        alert('Compute error: ' + (data.error || 'Failed'));
+                        alert('Publication error: ' + (data.error || 'Failed'));
                     }
                 })
                 .catch(err => alert('Request failed: ' + err.message));
