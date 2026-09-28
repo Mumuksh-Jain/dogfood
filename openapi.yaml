@@ -735,6 +735,250 @@ paths:
         '403':
           description: Forbidden - Organizer role required.
 
+  /api/v1/projects/{id}/vote:
+    post:
+      summary: Cast a community vote (Tier 3)
+      description: Casts a community vote for the specified project. Protected against duplicates (409 Conflict) and rate limited (429).
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '201':
+          description: Vote recorded successfully.
+        '401':
+          description: Unauthorized.
+        '403':
+          description: Voting closed.
+        '409':
+          description: Duplicate vote rejected.
+        '429':
+          description: Rate limit exceeded.
+    delete:
+      summary: Retract a community vote (Tier 3)
+      description: Retracts a previously cast community vote.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Vote retracted.
+        '401':
+          description: Unauthorized.
+        '404':
+          description: No vote found to retract.
+
+  /api/v1/projects/{id}/votes:
+    get:
+      summary: Get project vote status (Tier 3)
+      description: Returns community vote counts. Respects hidden results policy (hidden from public/participants while voting is open).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Vote summary.
+
+  /api/v1/community/leaderboard:
+    get:
+      summary: Community voting leaderboard (Tier 3)
+      description: Returns projects ranked by community votes. Hidden until voting window closes unless requested by organizer.
+      responses:
+        '200':
+          description: Ranked community voting leaderboard.
+
+  /api/v1/projects/{id}/comments:
+    get:
+      summary: List project comments (Tier 3)
+      description: Publicly lists all comments posted on the project.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of comments.
+    post:
+      summary: Post a comment (Tier 3)
+      description: Adds a community comment to the project.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  maxLength: 2000
+      responses:
+        '201':
+          description: Comment created.
+        '400':
+          description: Invalid comment content.
+        '401':
+          description: Unauthorized.
+
+  /api/v1/community/audit:
+    get:
+      summary: View voting audit trail (Tier 3)
+      description: Organizer-only audit trail recording vote casts and retractions with IP and timestamp.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Audit log entries.
+        '403':
+          description: Forbidden - Organizer role required.
+
+  /api/v1/projects/{id}/certificate:
+    get:
+      summary: Verifiable certificate of submission (Tier 4)
+      description: Generates a cryptographically sealed completion certificate with SHA-256 digest.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Verifiable certificate data.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CertificateData'
+
+  /api/v1/projects/{id}/certificate/verify:
+    get:
+      summary: Verify certificate authenticity (Tier 4)
+      description: Validates a certificate SHA-256 digest against the immutable project submission.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: digest
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Verification result.
+
+  /api/v1/judges/{id}/record:
+    get:
+      summary: Verifiable judge evaluation record (Tier 4)
+      description: Cryptographic record of completed evaluations. Enforces judge peer isolation.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Verifiable judge record.
+        '403':
+          description: Forbidden - Peer judges cannot inspect another judge's record.
+
+  /api/v1/webhooks:
+    get:
+      summary: List webhook subscriptions (Tier 4)
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Webhook subscriptions list.
+        '403':
+          description: Forbidden.
+    post:
+      summary: Register a webhook subscription (Tier 4)
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [target_url]
+              properties:
+                target_url:
+                  type: string
+                event_type:
+                  type: string
+                secret:
+                  type: string
+      responses:
+        '201':
+          description: Webhook registered.
+        '403':
+          description: Forbidden.
+
+  /api/v1/webhooks/{id}:
+    delete:
+      summary: Delete webhook subscription (Tier 4)
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Webhook deleted.
+
+  /api/v1/export.json:
+    get:
+      summary: Bulk platform JSON export (Tier 4)
+      description: Full platform JSON bundle with cryptographic manifest SHA-256.
+      security:
+        - BearerAuth: []
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Full export JSON bundle.
+        '403':
+          description: Forbidden.
+
 components:
   securitySchemes:
     BearerAuth:
@@ -845,3 +1089,58 @@ components:
           type: integer
         fallback_count:
           type: integer
+
+    CertificateData:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ISSUED
+        project_id:
+          type: string
+        project_title:
+          type: string
+        team_id:
+          type: string
+        event_id:
+          type: string
+        event_name:
+          type: string
+        digest_sha256:
+          type: string
+        verification_url:
+          type: string
+        issued_at_utc:
+          type: string
+
+    CommentView:
+      type: object
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+        user_id:
+          type: string
+        author_name:
+          type: string
+        content:
+          type: string
+        created_at:
+          type: string
+
+    WebhookSubscription:
+      type: object
+      properties:
+        id:
+          type: string
+        event_id:
+          type: string
+        target_url:
+          type: string
+        event_type:
+          type: string
+        is_active:
+          type: boolean
+        created_at:
+          type: string

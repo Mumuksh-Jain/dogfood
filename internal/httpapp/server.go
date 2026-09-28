@@ -40,6 +40,7 @@ type Server struct {
 	judgingService    *judging.Service
 	assignmentService *assignment.Service
 	resultsService    *results.Service
+	rateLimiter       *votingRateLimiter
 }
 
 // ProjectView holds project data for UI and API representations.
@@ -290,6 +291,10 @@ type ProjectDetailData struct {
 	Project         ProjectView
 	CanEdit         bool
 	User            *auth.Identity
+	CommunityVotes  int
+	VotesHidden     bool
+	UserVoted       bool
+	Comments        []CommentView
 }
 
 // ResultsData is passed to results.html template.
@@ -409,6 +414,7 @@ func NewServer(cfg Config) (*Server, error) {
 		judgingService:    judging.NewService(cfg.DB),
 		assignmentService: assignment.NewService(cfg.DB),
 		resultsService:    results.NewService(cfg.DB),
+		rateLimiter:       newVotingRateLimiter(60*time.Second, 15),
 	}
 
 	mux := http.NewServeMux()
@@ -539,6 +545,28 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /api/v1/organizer/judges/{id}/eligibility", s.handleOrganizerUpdateJudgeEligibilityAPI)
 	mux.HandleFunc("POST /api/organizer/rubrics", s.handleOrganizerCreateRubricAPI)
 	mux.HandleFunc("POST /api/v1/organizer/rubrics", s.handleOrganizerCreateRubricAPI)
+
+	// 14. Tier 3: Community voting, comments, audit trail, randomized gallery
+	mux.HandleFunc("POST /api/v1/projects/{id}/vote", s.handleVoteProjectAPI)
+	mux.HandleFunc("DELETE /api/v1/projects/{id}/vote", s.handleRetractVoteAPI)
+	mux.HandleFunc("GET /api/v1/projects/{id}/votes", s.handleGetProjectVotesAPI)
+	mux.HandleFunc("GET /api/v1/community/leaderboard", s.handleCommunityLeaderboardAPI)
+	mux.HandleFunc("GET /api/v1/projects/{id}/comments", s.handleGetProjectCommentsAPI)
+	mux.HandleFunc("POST /api/v1/projects/{id}/comments", s.handleCreateProjectCommentAPI)
+	mux.HandleFunc("GET /api/v1/community/audit", s.handleVoteAuditLogAPI)
+
+	// 15. Tier 4: Verifiable certificates, judge records, webhooks, embed gallery, bulk JSON export
+	mux.HandleFunc("GET /api/v1/projects/{id}/certificate", s.handleProjectCertificateAPI)
+	mux.HandleFunc("GET /api/v1/projects/{id}/certificate/verify", s.handleVerifyCertificateAPI)
+	mux.HandleFunc("GET /projects/{id}/certificate", s.handleProjectCertificateHTML)
+	mux.HandleFunc("GET /api/v1/judges/{id}/record", s.handleJudgeVerifiableRecordAPI)
+	mux.HandleFunc("GET /projects/embed", s.handleEmbedGalleryHTML)
+	mux.HandleFunc("GET /projects/{id}/embed", s.handleEmbedProjectHTML)
+	mux.HandleFunc("GET /api/v1/webhooks", s.handleListWebhooksAPI)
+	mux.HandleFunc("POST /api/v1/webhooks", s.handleCreateWebhookAPI)
+	mux.HandleFunc("DELETE /api/v1/webhooks/{id}", s.handleDeleteWebhookAPI)
+	mux.HandleFunc("GET /api/v1/export.json", s.handleBulkJSONExportAPI)
+	mux.HandleFunc("GET /api/v1/export/all.json", s.handleBulkJSONExportAPI)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	s.httpServer = &http.Server{
@@ -867,6 +895,9 @@ func (s *Server) handleGallery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		if r.URL.Query().Get("sort") == "random" {
+			data.Projects = shuffleProjects(data.Projects, r.URL.Query().Get("seed"))
+		}
 	}
 
 	data.TotalCount = len(data.Projects)
@@ -926,12 +957,47 @@ func (s *Server) handleProjectDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var eventID string
+	_ = s.db.QueryRowContext(r.Context(), "SELECT event_id FROM projects WHERE id = ?;", projectID).Scan(&eventID)
+
+	var commVotes int
+	votesHidden := true
+	userVoted := false
+	var comments []CommentView
+
+	vOpen, rHidden, _ := s.getCommunitySettings(r.Context(), eventID)
+	if !rHidden || !vOpen || canAdminister(user) {
+		votesHidden = false
+		_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM project_votes WHERE project_id = ?;", pv.ID).Scan(&commVotes)
+	}
+
+	if user != nil {
+		var cnt int
+		_ = s.db.QueryRowContext(r.Context(), "SELECT COUNT(*) FROM project_votes WHERE project_id = ? AND user_id = ?;", pv.ID, user.UserID).Scan(&cnt)
+		userVoted = (cnt > 0)
+	}
+
+	cmtRows, err := s.db.QueryContext(r.Context(), "SELECT id, project_id, user_id, author_name, content, created_at FROM project_comments WHERE project_id = ? ORDER BY created_at ASC;", pv.ID)
+	if err == nil {
+		defer cmtRows.Close()
+		for cmtRows.Next() {
+			var c CommentView
+			if err := cmtRows.Scan(&c.ID, &c.ProjectID, &c.UserID, &c.AuthorName, &c.Content, &c.CreatedAt); err == nil {
+				comments = append(comments, c)
+			}
+		}
+	}
+
 	data := ProjectDetailData{
 		EventName:       "Dogfood 2026",
 		SubmissionsOpen: open,
 		Project:         pv,
 		CanEdit:         canEdit,
 		User:            user,
+		CommunityVotes:  commVotes,
+		VotesHidden:     votesHidden,
+		UserVoted:       userVoted,
+		Comments:        comments,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -3002,6 +3068,10 @@ func (s *Server) handleListProjectsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if projects == nil {
 		projects = []ProjectView{}
+	}
+
+	if r.URL.Query().Get("sort") == "random" {
+		projects = shuffleProjects(projects, r.URL.Query().Get("seed"))
 	}
 
 	w.Header().Set("Content-Type", "application/json")

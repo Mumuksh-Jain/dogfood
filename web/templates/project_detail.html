@@ -70,6 +70,68 @@
                 <p class="summary-text">{{.Project.Summary}}</p>
             </div>
 
+            <div class="project-actions-section" style="margin-top: 1.5rem; display: flex; gap: 0.75rem; flex-wrap: wrap;">
+                <a href="/projects/{{.Project.ID}}/certificate" target="_blank" class="btn-sm btn-outline">📜 Verifiable Certificate</a>
+                <a href="/projects/{{.Project.ID}}/embed" target="_blank" class="btn-sm btn-outline">🔗 Embed Card</a>
+            </div>
+
+            <div class="community-voting-section" style="margin-top: 2rem; padding: 1.25rem; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                <h3 style="margin-top: 0; margin-bottom: 0.5rem;">Community Voting (Tier 3)</h3>
+                <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
+                    <div>
+                        {{if .VotesHidden}}
+                        <span class="tag" style="background: #fef3c7; color: #92400e;">Community votes hidden until voting window closes</span>
+                        {{else}}
+                        <span style="font-size: 1.25rem; font-weight: bold; color: #1e293b;">{{.CommunityVotes}} Votes</span>
+                        {{end}}
+                    </div>
+                    <div>
+                        {{if .User}}
+                            {{if .UserVoted}}
+                            <button type="button" onclick="fetch('/api/v1/projects/{{.Project.ID}}/vote', {method: 'DELETE'}).then(() => location.reload())" class="btn-sm btn-outline" style="color: #ef4444; border-color: #ef4444;">Retract Vote</button>
+                            {{else}}
+                            <button type="button" onclick="fetch('/api/v1/projects/{{.Project.ID}}/vote', {method: 'POST'}).then(() => location.reload())" class="btn-sm btn-primary">⭐ Cast Vote</button>
+                            {{end}}
+                        {{else}}
+                            <a href="/login?return_to=/projects/{{.Project.ID}}" class="btn-sm btn-primary">Sign In to Vote</a>
+                        {{end}}
+                    </div>
+                </div>
+            </div>
+
+            <div class="comments-section" style="margin-top: 2rem;">
+                <h3>Community Feedback & Comments</h3>
+                {{if .Comments}}
+                <div class="comment-list" style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem;">
+                    {{range .Comments}}
+                    <div class="comment-card" style="padding: 1rem; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.85rem; color: #64748b;">
+                            <strong>{{.AuthorName}}</strong>
+                            <span>{{.CreatedAt}}</span>
+                        </div>
+                        <p style="margin: 0; color: #334155;">{{.Content}}</p>
+                    </div>
+                    {{end}}
+                </div>
+                {{else}}
+                <p style="color: #64748b; font-style: italic;">No comments yet. Be the first to leave feedback!</p>
+                {{end}}
+
+                {{if .User}}
+                <div style="margin-top: 1.5rem; padding: 1.25rem; background: #f8fafc; border-radius: 8px; border: 1px solid #e2e8f0;">
+                    <h4 style="margin-top: 0; margin-bottom: 0.5rem;">Leave a Comment</h4>
+                    <form action="/api/v1/projects/{{.Project.ID}}/comments" method="POST">
+                        <textarea name="content" rows="3" required placeholder="Share your feedback or thoughts..." style="width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 0.5rem; box-sizing: border-box;"></textarea>
+                        <div style="margin-top: 0.5rem; text-align: right;">
+                            <button type="submit" class="btn-sm btn-primary">Post Comment</button>
+                        </div>
+                    </form>
+                </div>
+                {{else}}
+                <p style="margin-top: 1rem;"><a href="/login?return_to=/projects/{{.Project.ID}}" class="btn-sm btn-outline">Sign In to Comment</a></p>
+                {{end}}
+            </div>
+
             {{if .CanEdit}}
             <div class="project-edit-section">
                 <hr class="divider">
