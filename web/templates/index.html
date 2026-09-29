@@ -7,6 +7,51 @@
     <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
+    <style>
+        @keyframes bootTitleAnim {
+            0% { opacity: 0; transform: scale(0.9) translateY(15px); filter: blur(5px); }
+            100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0); }
+        }
+    </style>
+    <div id="boot-sequence" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: #050505; z-index: 9999; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 2.5rem; color: #10b981; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 1.05rem; transition: opacity 0.5s ease-out; pointer-events: none;">
+        <div id="boot-log" style="position: absolute; bottom: 2.5rem; left: 2.5rem; display: flex; flex-direction: column; gap: 0.6rem;"></div>
+        <div id="boot-title" style="font-size: 4.5rem; font-weight: bold; color: #fff; display: none; text-align: center; font-family: 'Outfit', 'DM Sans', sans-serif; text-shadow: 0 4px 20px rgba(16, 185, 129, 0.4); animation: bootTitleAnim 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;">
+            Hackathon Raptors
+            <span style="font-size: 1.6rem; color: #10b981; font-weight: 500; margin-top: 1rem; display: block; letter-spacing: 0.05em; text-transform: uppercase;">Hackathons you can actually trust.</span>
+        </div>
+    </div>
+    <script>
+    (function() {
+        const bootLog = document.getElementById('boot-log');
+        const bootScreen = document.getElementById('boot-sequence');
+        const bootTitle = document.getElementById('boot-title');
+        const logs = [
+            "Initializing Evaluation Engine...",
+            "Loading cryptographic manifest [SHA-256]...",
+            "Establishing deterministic judge graph...",
+            "Mounting SQLite WAL data structures...",
+            "Applying statistical normalization thresholds...",
+            "SYSTEM READY."
+        ];
+        let i = 0;
+        const interval = setInterval(() => {
+            if (i < logs.length) {
+                const p = document.createElement('div');
+                p.textContent = "> " + logs[i];
+                bootLog.appendChild(p);
+                i++;
+            } else {
+                clearInterval(interval);
+                bootLog.style.display = 'none';
+                bootTitle.style.display = 'block';
+                setTimeout(() => {
+                    bootScreen.style.opacity = '0';
+                    setTimeout(() => bootScreen.style.display = 'none', 400);
+                }, 1500);
+            }
+        }, 150);
+    })();
+    </script>
     <header class="site-header">
         <div class="container header-inner">
             <div class="brand-group">
@@ -187,5 +232,12 @@
             }
         }
     </script>
+<script>
+document.addEventListener('mousemove', e => {
+  document.body.style.setProperty('--mouse-x', e.clientX + 'px');
+  document.body.style.setProperty('--mouse-y', e.clientY + 'px');
+});
+</script>
 </body>
 </html>
+

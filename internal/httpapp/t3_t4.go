@@ -251,6 +251,11 @@ func (s *Server) handleVoteProjectAPI(w http.ResponseWriter, r *http.Request) {
 		"timestamp":  nowUTC,
 	})
 
+	if strings.Contains(r.Header.Get("Accept"), "text/html") || (!strings.Contains(r.Header.Get("Accept"), "application/json") && strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded")) {
+		http.Redirect(w, r, fmt.Sprintf("/projects/%s", projectID), http.StatusSeeOther)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -317,6 +322,11 @@ func (s *Server) handleRetractVoteAPI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_ = s.logVoteAudit(r.Context(), eventID, user.UserID, projectID, "VOTE_RETRACTED", clientIP(r), r.UserAgent())
+
+	if strings.Contains(r.Header.Get("Accept"), "text/html") || (!strings.Contains(r.Header.Get("Accept"), "application/json") && strings.Contains(r.Header.Get("Content-Type"), "application/x-www-form-urlencoded")) {
+		http.Redirect(w, r, fmt.Sprintf("/projects/%s", projectID), http.StatusSeeOther)
+		return
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -570,6 +580,11 @@ func (s *Server) handleCreateProjectCommentAPI(w http.ResponseWriter, r *http.Re
 	`, commentID, eventID, projectID, user.UserID, authorName, content, nowUTC)
 	if err != nil {
 		http.Error(w, `{"error": "failed to record comment"}`, http.StatusInternalServerError)
+		return
+	}
+
+	if strings.Contains(r.Header.Get("Accept"), "text/html") || (!strings.Contains(r.Header.Get("Accept"), "application/json") && strings.Contains(contentType, "application/x-www-form-urlencoded")) {
+		http.Redirect(w, r, fmt.Sprintf("/projects/%s#comments", projectID), http.StatusSeeOther)
 		return
 	}
 
